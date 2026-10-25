@@ -1,0 +1,2180 @@
+
+
+===== PAGE 1 =====
+
+QuIP#: Even Better LLM Quantization with
+Hadamard Incoherence and Lattice Codebooks
+Albert Tseng * 1 Jerry Chee * 1 Qingyao Sun 2 Volodymyr Kuleshov1 Christopher De Sa 1
+Abstract
+Post-training quantization (PTQ) reduces the
+memory footprint of LLMs by quantizing their
+weights to low-precision. In this work, we in-
+troduce QuIP#, a weight-only PTQ method that
+achieves state-of-the-art results in extreme com-
+pression regimes (≤ 4 bits per weight) using three
+novel techniques. First, QuIP# improves QuIP’s
+(Chee et al., 2023) incoherence processing by us-
+ing the randomized Hadamard transform, which
+is faster and has better theoretical properties. Sec-
+ond, QuIP# uses vector quantization to take ad-
+vantage of the ball-shaped sub-Gaussian distri-
+bution that incoherent weights possess: specif-
+ically, we introduce a set of hardware-efficient
+codebooks based on the highly symmetric E8
+lattice, which achieves the optimal 8-dimension
+unit ball packing. Third, QuIP# uses fine-tuning
+to improve fidelity to the original model. Our
+experiments show that QuIP # outperforms ex-
+isting PTQ methods, enables new behaviors in
+PTQ scaling, and supports fast inference. Our
+code can be found at https://github.com/
+Cornell-RelaxML/quip-sharp.
+1. Introduction
+Large language models (LLMs) have driven rapid advances
+across diverse fields such as natural language processing
+(Touvron et al., 2023b), scientific modeling (Nguyen et al.,
+2023), and program synthesis (Rozi`ere et al., 2024). How-
+ever, the massive size of these models poses significant chal-
+lenges to their deployment. For example, the largest model
+in the Llama 2 family has 70B parameters, and requires
+140GB of GPU memory in native 16-bit precision (Touvron
+*Equal contribution 1Department of Computer Science, Cor-
+nell University 2Department of Operations Research and In-
+formation Engineering, Cornell University. Correspondence
+to: Albert Tseng <albert@cs.cornell.edu>, Jerry Chee <jer-
+rychee@cs.cornell.edu>.
+Proceedings of the 41 st International Conference on Machine
+Learning, Vienna, Austria. PMLR 235, 2024. Copyright 2024 by
+the author(s).
+Model Size (Bits)
+Wikitext2 Perplexity (ctx 4096)
+3
+4
+5
+6
+7
+5E+10 1E+11
+QuIP# 2 Bit
+QuIP# 3 Bit
+QuIP# 4 Bit
+AQLM ~2 Bit
+Theoretical Lossless (FP16) 4 Bit
+QuIP 2 Bit
+Figure 1. QuIP# offers unprecedented quantization quality at ex-
+treme compression ratios. QuIP # 3-bit models also scale better
+than theoretically lossless 4-bit models, a previously unseen result.
+et al., 2023b). This massive memory footprint motivates re-
+search into lossless LLM compression methods.
+Post-training quantization (PTQ) linearly reduces the mem-
+ory footprint of models by storing trained weights with
+less precision. For example, Llama 2 70B only requires
+< 20GB of memory when quantized to 2 bits. This not only
+lets large models fit on smaller devices, but also enables
+faster throughput in memory bound settings such as autore-
+gressive decoding. However, existing quantization meth-
+ods either do not scale to extreme compression ratios (Shao
+et al., 2024) or have expensive decoding schemes (Egiazar-
+ian et al., 2024), motivating the development of both good
+and fast PTQ methods.
+In this work, we introduce QuIP #, a weight-only PTQ
+method that achieves a new state-of-the-art in model quan-
+tization. QuIP # improves over existing work via three
+techniques: incoherence processing, lattice codebooks, and
+fine-tuning. Incoherence processing is a principled form
+of outlier suppression that produces approximately Gaus-
+sian distributed weight matrices (Chee et al., 2023). QuIP#
+1
+arXiv:2402.04396v2  [cs.LG]  4 Jun 2024
+
+===== PAGE 2 =====
+
+QuIP#
+Original  
+Model
+Fine-Tuning
+Weights
+Hadamard
+Transform
+Lattice Code
+ Compressed 
+Model
+Figure 2. QuIP# performs incoherence processing with a Randomized Hadamard Transform and uses lattice codebooks to achieve state-
+of-the-art quantized models.
+performs incoherence processing with the computationally-
+efficient randomized Hadamard transform (Halko et al.,
+2011) (Section 3). To quantize incoherent matrices, QuIP#
+uses the BlockLDLQ block adaptive rounding algorithm
+with compressible codebooks based on the E8 lattice, which
+achieves the highest density 8 dimensional unit-ball pack-
+ing (Viazovska, 2017) (Section 4). The E8 lattice is highly
+structured and symmetric, allowing our codebooks to be
+hardware-friendly and admit fast inference. Finally, QuIP#
+includes an inter-layer fine-tuning algorithm that further im-
+proves quantization quality (Section 5).
+QuIP# significantly outperforms existing PTQ methods in-
+cluding OmniQuant (Shao et al., 2024), QuIP (Chee et al.,
+2023) (a previous, separate work), and AQLM (Egiazarian
+et al., 2024). To the best of our knowledge, QuIP# is also
+the first PTQ method where 3-bit models scale better than
+4-bit models. This directly refutes Dettmers & Zettlemoyer
+(2023)’s claim that 4-bit models are “optimal” and indicates
+that as the field of PTQ develops, 2-bit models are likely to
+scale better than 3-bit models in the near future. Moreover,
+QuIP# was designed from the ground up to be fast. Algo-
+rithm 2 describes fast inference with a QuIP #-quantized
+linear layer. Our “proof of concept” CUDA implementation
+of QuIP# achieves over 50% of peak memory bandwidth
+on a NVIDIA RTX 4090, validating our design choices.
+In summary, we introduce QuIP#, a post-training quanti-
+zation method that achieves state-of-the-art results by
+1. Performing incoherence processing with the Random-
+ized Hadamard Transform, which has better incoher-
+ence properties and faster runtime than the Kronecker
+factorization in QuIP.
+2. Rounding incoherence-processed weight matrices with
+block adaptive rounding and codebooks based on the
+E8 lattice, which achieves the highest 8-dimension unit
+ball packing density (kissing number).
+3. Introducing an inter-layer fine-tuning algorithm that
+further improves quantization quality.
+Algorithm 1 QuIP# without Fine-Tuning (QuIP#-NoFT)
+input Weight W ∈ Rm×n, hessians H ∈ Rn×n, g-dim. k-
+bit codebook C
+ˆW , ˆH, SU , SV ← IP-RHT(W, H) (Alg. 3)
+ˆW ← BlockLDLQ( ˆW , ˆH, C) (Sec. 4.1)
+output ˆW , SU , SV
+Algorithm 2 QuIP# Inference (for a Linear Layer)
+input ˆW , SU , SV from Alg. 1, g-dim. k-bit codebook C,
+input x ∈ Rn.
+y ← Had(SV ⊙ x) where Had performs
+an orthogonal Hadamard transform (Sec. 3)
+y ← decompress_multiply( ˆW , C, y)
+y ← Had(SU ⊙ y)
+output y
+2. Background / Related Work
+2.1. Compressing LLMs
+A large body of work has focused on compressing LLMs, as
+doing so can directly benefit LLM inference at scale. Meth-
+ods such as pruning, quantization aware training (QAT), and
+post-training quantization (PTQ) all focus on different ar-
+eas of this problem and are not strictly orthogonal to each
+other. Pruning removes weights from models while preserv-
+ing model quality and inference performance (Chee et al.,
+2022; Sun et al., 2023). QAT focuses on training models that
+are more “quantizable” but usually requires training mod-
+els from scratch (Nagel et al., 2022; Xi et al., 2023). PTQ,
+which QuIP # falls under, instead quantizes pre-trained
+models. PTQ requires less compute than QAT and achieves
+competitive performance (Chee et al., 2023; Frantar et al.,
+2023; Shao et al., 2024; Egiazarian et al., 2024). For the
+rest of this paper, we focus on PTQ.
+2.2. Quantization and Adaptive Rounding
+In QuIP#, we follow existing state-of-the-art PTQ methods
+and round weights to minimize the per-layer proxy loss, as
+2
+
+===== PAGE 3 =====
+
+QuIP#
+formalized by Nagel et al. (2020):
+ℓ( ˆW ) = Ex
+h
+∥( ˆW − W )x∥2
+i
+(1)
+= tr
+
+( ˆW − W )H( ˆW − W )T
+
+. (2)
+Here, W ∈ Rm×n is the original weight matrix in a linear
+layer, ˆW ∈ Rm×n are the quantized weights, x ∈ Rn is an
+input vector drawn uniformly at random from a calibration
+set, and H = Ex[xxT ] is a proxy Hessian. This intra-layer
+formulation makes quantization tractable for LLMs. One
+way to minimize ℓ is to use adaptive rounding methods that
+iteratively round weight matrices by considering the current
+rounding error for that specific matrix. For example, the
+LDLQ1 rounding algorithm iteratively rounds rows of model
+weights using linear feedback from quantization error of
+already rounded rows. LDLQ is optimal within the class
+of adaptive rounding methods with linear feedback and
+offers provably better error rates than nearest or stochastic
+rounding (Chee et al., 2023).
+2.3. Incoherence Processing
+Multiple works have observed that outliers in model acti-
+vations and weights can hinder quantization quality, moti-
+vating methods that “suppress” outliers during quantization.
+For example, AWQ (Lin et al., 2023) scales model weights
+by information from activations and OmniQuant (Shao et al.,
+2024) uses simple learnable model-preserving transforma-
+tions. However, these heuristic-based approaches tend to
+fail at lower bitrates.
+Instead, in QuIP, Chee et al. (2023) proposed thatincoher-
+ence is important for LLM quantization. Informally, inco-
+herent matrices have concentrated entry magnitudes—ruling
+out outliers. In LLMs, incoherent weight and Hessian matri-
+ces mean that both the thing being rounded (weights) and
+important rounding directions (Hessians) are not too large
+in any coordinate. This enables quantization with provably
+bounded error.
+Definition 2.1 (Chee et al. (2023)). A Hessian H ∈ Rn×n
+is µ-incoherent if its eigendecomposition H = QΛQT has
+maxi,j |Qij|= maxi,j |eT
+i Qej|≤ µ/√n.
+A weight matrix W ∈ Rm×n is µ-incoherent if
+max
+i,j
+|Wij|= maxi,j |eT
+i W ej|≤ µ∥W ∥F /√mn.
+To exploit incoherence, Chee et al. (2023) introduced inco-
+herence processing as a part of their quantization method
+1OPTQ (Frantar et al., 2023) and QuIP independently intro-
+duced alternative formulations of this rounding method, and QuIP
+showed them to be equivalent. LDLQ is the name given by QuIP.
+QuIP. QuIP’s incoherence processing works by conjugat-
+ing W and H by structured random orthogonal matrices.
+Specifically, QuIP constructs orthogonal matrices U ∈
+Rm×m and V ∈ Rn×n via a Kronecker product by draw-
+ing uniform random orthogonal matrices U1, U2 (of sizes
+about √n), V1, and V2 (of sizes about √m) and setting
+U = U1 ⊗ U2 and V = V1 ⊗ V2. If we assign ˜H ←
+V HV T and ˜W ← U W V T , ˜H and ˜W become ˜O(1)-
+incoherent with high probability (see their Lemma 5). Note
+that this transformation preserves the proxy objective, as
+tr
+ 
+(U W V T )(V HV T )(V W T U T )
+
+= tr
+ 
+W HW T
+. Af-
+ter quantizing the transformed weight matrix ˜W using ˜H,
+during inference, QuIP-quantized models transform model
+activations x with V and U T to compute
+U T (quantized( ˜W )(V x)) ≈ U T ( ˜W (V x)) = W x.
+These structured orthogonal multiplies by a Kronecker prod-
+uct lead to a runtime overhead of Θ(n√n + m√m), which
+is small relative to the Θ(mn) cost of the multiply by W .
+Incoherence processing can be seen as a principled alterna-
+tive to more complicated and heuristic methods for outlier
+suppression. Methods such as grouping and keeping outliers
+in FP16 require extra storage and can negatively impact per-
+formance. For example, using a 16 bit scale per group of 64
+weights requires an extra 0.25 bits per weight. This increase
+is significant in extreme compression regimes, whereas in-
+coherence processing has minimal inference overhead and
+allows more bits to be spent on actually quantizing model
+weights. Alternatively, keeping outliers in high precision re-
+quires storing unstructured high precision matrices, which
+are slow to multiply by.
+2.4. Vector Quantization
+Prior PTQ works have focused on quantizing each scalar
+weight Wij individually, amounting to scalar quantization
+(SQ) (Chee et al., 2023; Lin et al., 2023; Shao et al., 2024).
+However, SQ is subotimal as it ignores the shape of the
+source distribution. Vector quantization (VQ) instead quan-
+tizes a group of d weights together as a d dimensional vec-
+tor. In k-bit VQ, a vector is quantized to one of 2kd vectors
+∈ Rd that form a 2kd × d codebook C. By shaping C to the
+source distribution of W , VQ can achieve lower distortion
+than SQ, with higher d enabling better shaping (Kostina &
+Verd´u, 2011).
+However, VQ has exponential cost in both the bitrate and
+vector dimension. As such, VQ can be expensive and can
+have limited distortion gains over SQ due to practical con-
+straints on d. For example, for fast inference on GPUs, C
+must fit in L1 cache even after bank conflicts (32× dupli-
+cation). This means that kd can be at most ≈ 10 for an un-
+structured C. In QuIP#, we mitigate these issues by using a
+highly structured 2-bit codebook based on the 8D E8 lattice,
+3
+
+===== PAGE 4 =====
+
+QuIP#
+Algorithm 3 Incoherence Processing with RHT (IP-RHT)
+input W ∈ Rm×n, H ∈ Rn×n
+Sample sign vectors SV ∼ U {±1}n, SU ∼ U {±1}m
+ˆW ← Had(diag(SU)Had(diag(SV )W T )T ) where
+Had is the Hadamard transform (sec. 3)
+ˆH ← Had(diag(SV )Had(diag(SV )H)T )
+output ˆW , ˆH, SU , SV
+E8P. E8P achieves kd = 16 but can be compressed 256×,
+allowing it to fit in GPU cache.
+2.5. Fine-Tuning vs. Quantization Aware Training
+Fine-tuning (FT) for LLM PTQ was introduced in AQLM
+(Egiazarian et al., 2024) as a tractable way to capture inter-
+layer interactions. As presented in AQLM and here, fine-
+tuning is essentially a hybrid method between pure PTQ and
+full QAT that requires significantly less data and compute
+than full QAT. With QuIP#, fine-tuning generally matches
+the performance of QAT, with the caveat that QAT for LLMs
+is a relatively underexplored area. For example, with some
+extrapolation, LLM-QAT (Liu et al., 2023) 4 bit (4-16-16)
+performs around the same as QuIP# 4 bit with or without
+FT. However, QuIP# can quantize a 70B parameter model
+in a few hours on a single 8 GPU node while LLM-QAT
+needs 960 GPU-hours to generate training data alone. Since
+fine-tuning for PTQ is a very recent development, both the
+methods presented here and in AQLM are almost certainly
+not optimal. However, they serve to show that FT is a rel-
+atively cheap way to achieve QAT-quality models, making
+such an approach practical and promising.
+3. Incoherence Processing with the
+Randomized Hadamard Transform
+In this section, we propose a way of improving the inco-
+herence processing of QuIP by replacing the 2-factor Kro-
+necker product by a Randomized Hadamard Transforma-
+tion (RHT) (Halko et al., 2011). This change yields three
+advantages: (1) the theoretical bound on the incoherence pa-
+rameter µ is improved; (2) the asymptotic cost of multiply-
+ing by the structured random orthogonal matrix is improved
+from Θ(n√n) to Θ(n log n); (3) the cost to multiply is fur-
+ther reduced by a constant factor, since a Hadamard matrix
+multiply can be performed without any floating-point multi-
+plies as its entries are in {−1, +1}. Additionally, we show
+in Section 6.4 that this change by itself improves the per-
+plexity of quantized LLMs.
+Recall from section 2.3 that one way to efficiently perform
+incoherence processing is to conjugate W and H by struc-
+tured random orthogonal matrices. QuIP # uses the RHT,
+which performs x → V Sx where V ∈ Rn×n is a Hadamard
+matrix, S is a random sign vector {±1}n, and x ∈ Rn.
+The RHT can be computed in O(n log n) time with the Fast
+Walsh-Hadamard Transform (Fino & Algazi, 1976) when n
+is a power of 2. We will temporarily assume that all dimen-
+sions are powers of 2. Later in the section we will explain 2
+methods for incoherence processing when the dimension is
+not a power of 2.
+Lemma 3.1. Let H be any positive semidefinite matrix on
+Rn×n and W any weight matrix on Rm×n. Let U ∈ Rm×m
+and V ∈ Rn×n be orthogonal scaled Hadamard matrices.
+Let SU ∈ Rm×m and SV ∈ Rn×n be random diagonal ma-
+trices with independent diagonal elements drawn uniformly
+from {−1, +1}. Then for any δ > 0, V SV HS V V T is µH-
+incoherent with probability at least1−δ, and U SU W SV V T
+is µW -incoherent with probability at least 1 − δ, where
+µH =
+s
+2 log
+2n2
+δ
+
+and µW = 2 log
+4mn
+δ
+
+.
+In QuIP (Chee et al., 2023), the 2-factor Kronecker approach
+achieves µKron
+W = A2 log (4Cmn/δ)2, where A and C
+are global constants independent of n and the number of
+factors. QuIP#’s RHT achieves superior incoherence via a
+log dependence on the matrix size rather that the Kronecker
+method’s log-squared dependence. All of QuIP’s theory
+analyzing the proxy loss in Eq. (1) still holds with the RHT,
+with the improved incoherence rates propagating through.
+Now, what about dimensions n that are not powers of 2?
+In most cases, we can factorize n = pq where that p is the
+largest power of 2 such that there exists a known Hadamard
+matrix of size q. This allows us to construct V ∈ Rn×n =
+Hp ⊗ Hq where Hp and Hq are size p and q Hadamard
+matrices, respectively. Then we can compute V Sx in
+O(q2p log p) time, which is faster than theO(n(p+q)) time
+of QuIP’s 2-factor Kronecker approach whenp ≫ q. For ex-
+ample, Llama 2 70B has intermediate dimension 28672 =
+1024 ∗ 28; 1024 ≫ 28. Algorithm 3 describes how to per-
+form incoherence processing with the RHT. Doing so re-
+quires storing two sign vectors SU ∈ {± 1}m and SV ∈
+{±1}n. Since n, m ≫ 1000 for LLMs, SU and SV add less
+than 0.01 bits per weight (see Section F.1 for more details).
+While the Hadamard conjecture states that ∃Hk∀k, 4 | k,
+finding such Hadamard matrices is still an open problem
+(Hedayat & Wallis, 1978). In cases when there does not
+exist a factorization n = pq where ∃Hp, Hq, we present a
+Randomized Fast Fourier Transform (RFFT) incoherence
+processing algorithm with similar runtime and concentration
+properties as the RHT. At a high level, the RFFT performs
+incoherence processing with the Fast Fourier Transform
+(FFT) (Cochran et al., 1967) and a random complex phase.
+The RFFT only requires n to be even, which is much weaker
+than the RHT’s restrictions onn. The RFFT is also useful
+when there does exist a decomposition n = pq but p ̸≫ q,
+4
+
+===== PAGE 5 =====
+
+QuIP#
+resulting in reduced speedups over an Θ(n√n) algorithm.
+The FFT itself is also well supported on a wide variety of
+hardware, meaning that it may be easier to implement a fast
+RFFT when adapting QuIP# to new hardware. In practice,
+we find that the RFFT performs slightly worse than the RHT
+but still achieves strong results (Table 1). We describe the
+RFFT in detail in Section A.2 in the Appendix.
+Table 1. RHT vs. RFFT incoherence processing using 2 Bit
+QuIP# (no FT). WikiText2 perplexity (↓), context length 4096.
+INCOHERENCE 2-7B 2-13B 2-70B
+HADAMARD 8.22 6.06 4.16
+FOURIER 8.30 6.08 4.17
+4. BlockLDLQ and Lattice Codebooks
+It follows from the central limit theorem that RHT-
+transformed weights follow a roughly ball-shaped Gaussian
+distribution. However, rounding weights one at a time, as
+QuIP does with its LDLQ, ignores this shaping—producing
+a set of representable weight vectors that is shaped like a
+hypercube rather than a ball. Vector quantization (VQ) lets
+us shape codebooks to better match the source distribution.
+VQ codebooks quantize multiple weights to a single code-
+book entry, and we design the overall shape of our codebook
+to better match the roughly ball shape of the RHT trans-
+formed weights. In Section 4.1, we introduce BlockLDLQ,
+which adaptively rounds blocks of weights with VQ. Within
+BlockLDLQ’s VQ step, QuIP# uses the 2 bit E8P codebook
+(Section 4.2). E8P is based on theE8 lattice, which achieves
+the highest density unit ball packing in R8 (Viazovska,
+2017). E8P achieves good shaping while enabling fast infer-
+ence by only needing to look up from a 256 × 8 codebook.
+4.1. Adaptive Rounding for Vector Quantization
+Chee et al. (2023) formulated a class of adaptive round-
+ing algorithms with linear feedback. These methods round
+columns one at a time with linear feedback ak from the
+already rounded columns. Specifically, columns of a
+weight matrix W ∈ Rm×n are iteratively rounded for
+k = 1, 2, . . . , n: ˆWk = Q(Wk + (W:(k−1) − ˆW:(k−1))ak),
+where Wk is the k-th column of W , W:(k−1) is the first
+k − 1 columns of W , Q performs nearest or stochastic
+rounding, and ak ∈ Rk−1. The resulting ˆW satisfies ˆW =
+Q(W + (W − ˆW )U), where U ∈ Rn×n is a upper triangu-
+lar matrix whose columns are ak and Q acts elementwise.
+The LDLQ algorithm sets U to be LT − I where H =
+LT DL is the LDL decomposition of the proxy Hessian H.
+From QuIP, we know that LDLQ is optimal within adaptive
+rounding methods with linear feedback when rounding to
+the integers. However, LDLQ does not work with vector
+quantization, which rounds multiple columns together. Here,
+we extend LDLQ to support vector quantization. Given a
+block size g that evenly divides n, our block LDLQ is based
+on a novel g-block LDL decomposition H = LT DL, where
+L is a unit block lower triangular matrix (among the n2/g2
+g × g blocks of L ∈ Rn×n, the n/g diagonal blocks are
+all I and all blocks above the diagonal are 0), and D is a
+block diagonal matrix.2 As before, we set U = LT − I, and
+round W in a block-wise fashion via
+ˆWk = Q(Wk + (W:(k−1) − ˆW:(k−1))Ak),
+where Ak ∈ Rn×g contains the k − g + 1 through k-th
+columns of U (the kth block), Wk similarly denotes the kth
+block of W , and Q denotes a vector quantizer. As in the
+original QuIP paper, we can bound the error of this method.
+Theorem 4.1. Suppose that we round W ∈ Rm×n using g-
+block LDLQ with Hessian H, producing ˆW . Suppose that
+H is µ-incoherent, and that we use a (possibly stochastic)
+vector quantizer Q that satisfies E[(Q(x) − x)(Q(x) −
+x)T ] ⪯ σ2I for any x ∈ Rg. Then
+E[tr(( ˆW − W )H( ˆW − W )T )] ≤ gmµ2σ2
+n tr(H 1/2)2.
+Observe that under the same conditions, just quantizing all
+blocks independently would yield E[tr(( ˆW − W )H( ˆW −
+W )T )] ≤ gmσ 2 tr(H): this “improvement” from the trace
+of H to the square of the trace of its square root divided by
+n is the same factor achieved in the scalar case in QuIP.3
+4.2. The E8P (“E8 Padded”) Codebook
+BlockLDLQ relies on an internal vector quantization (VQ)
+step Q that rounds a d-dimension (g in the previous section)
+vector to a codebook C. To effectively apply VQ, C should
+be shaped like the source distribution and have high packing
+density. One way to improve shaping is by increasing d.
+However, recall from Section 2.4 that to quantize a vector
+v ∈ Rd to k bits with VQ, C must have size 2kd × d.
+Since the codebook size is exponential in both the vector
+dimension and bitrate, VQ quickly becomes intractable at
+high dimensions or bitrates.
+In QuIP#, we introduce the novel 2-bit 8 dimensional E8P
+codebook, which contains 216 entries but only requires
+lookups into a 28-entry table, with the remaining 8 bits be-
+ing used to store signs and shifts. E8P requires only 1KiB
+of space and therefore fits in the L1 cache of any modern
+GPU, even after duplicating for bank conflicts (32×). E8P
+2It is straightforward to produce the g-block LDL decomposi-
+tion from the Cholesky decomposition of H.
+3The original QuIP paper also included multiple other technical
+guarantees, including a bound that considers more rigorously the
+“real” case of finite-sized codebooks. While these results could
+also be generalized to the block-LDLQ case, we view this as not
+providing much insight relevant to QuIP# beyond Theorem 4.1,
+so (if desired) they are left as an exercise for the reader.
+5
+
+===== PAGE 6 =====
+
+QuIP#
+mitigates the scaling issues of VQ by taking advantage of
+the structure and symmetries of the E8 lattice on which it is
+based. The E8 lattice is composed of all-integer or all-half-
+integer vectors in R8 whose sum is an even number, that is
+E8 =
+ 
+Z8 ∪
+ 
+Z8 + 1
+2
+
+∩
+
+x | 1T x is even
+	
+.
+The construction of the E8P codebook starts with an equiv-
+alent way to write E8 via the ˆD8 lattice, where ˆD8 =
+x ∈ Z8 + 1
+2 | 1T x is even
+	
+is the set of half-integer vec-
+tors with even parity: here, E8 = ˆD8 ∪( ˆD8 + 1
+2). It follows
+that ( ˆD8 − 1
+4) ∪ ( ˆD8 + 1
+4) = E8 + 1
+4 is just a shifted copy
+of E8 (keeping the same optimal packing density).
+ˆD8 has nice symmetry properties: flipping any (nonzero)
+even number of signs of an element in ˆD8, yields another
+distinct element in ˆD8. This means that if | ˆD8| denotes
+the set of elementwise absolute values of entries in ˆD8,
+then each element of ˆD8 can be expressed (uniquely) as the
+elementwise product of an entry s ∈ | ˆD8| and a sign vector
+of appropriate parity. So, if we start from some “source
+codebook” of absolute entriesS ⊂ | ˆD8|, we can use the 128
+possible odd- or even-parity sign flips to generate a subset
+of ˆD8. Each entry in S is either an odd or even number of
+flips away from an entry in ˆD8, but not both. Thus, given
+s ∈ S and 7 out of the 8 sign flips, we can infer the last one
+from the parity of the 7 sign flips and s. This lets us use the
+following pattern to store a 16-bit codeword inE8+ 1
+4: 8 bits
+for the entry in S, 7 bits for sign flips, and 1 bit to ± 1
+4. This
+lets us decode a size 216 codebook by looking up into only
+a size 28 codebook (S) and performing some operations.
+All that remains is how to choose S: we set S to be the
+227 elements of | ˆD8| with norm ≤
+√
+10 plus 29 “padding”
+elements from | ˆD8| with norm
+√
+12 (see Section C.1). We
+call this ball-shaped 216-entry lattice codebook “E8P.”
+Figure 3 plots the elementwise MSE of quantizing a stan-
+dard multivariate Gaussian to variousk bit codebooks. Each
+k-bit codebook consists of ad-dimensional base lattice inter-
+sected with a ball to reach 2kd points. The E8-based code-
+books achieve lower MSEs than all other presented code-
+books, including those based on the D4 lattice (the even-
+parity vectors in Z4), which achieves the kissing number
+in R4. This figure illustrates the importance of dimension
+for vector quantization. Increasing the vector dimension
+decreases the error for the half integer grid, as the result-
+ing codebook is closer in shape to the source distribution.
+Finally, while K-means on the source distribution would
+achieve lower MSE (Lloyd, 1982), there are a number of
+practical reasons why a K-means based codebook would be
+less practical, including worse end-to-end empirical perfor-
+mance. We discuss this more in Section C.3.
+Figure 3. Minimum achievable elementwise MSE of quantizing a
+Gaussian to various codebooks. E8-based codebooks outperform
+other presented codebooks due to the underlying packing density
+and high dimensionality of E8.
+4.3. Scaling E8 to Higher Bitrates
+The E8 lattice works well for low bitrates (e.g. 2 bits), but
+quickly becomes intractable at higher bitrates due to code-
+book size. In QuIP#, we use residual vector quantization
+(RVQ) (Juang & Gray, 1982) to get the benefits of lattice
+codebooks at higher bitrates. RVQ quantizes a vector x to p
+bits with a set q of qi-bit codebooks (denoted RVQ(x, p, q)
+where p =P
+0≤i<|q| qi) by repeatedly quantizing the quan-
+tization residual. That is, RVQ(x, p, q) = P
+0≤i<|q| δi
+where δi = Qqi
+
+(x −P
+0≤j<i δj)/si
+
+· si, we let Qqi(·)
+denote quantizing to a qi bit codebook, and si ∈ R. Using
+RVQ, we can quantize to 4 bits by rounding with the 2 bit
+E8P codebook twice. We can also quantize to 3 bits by using
+the 2 bit E8P codebook and a 1-bit E8 codebook (elements
+of E8 with norm ≤ 2 and 15 elements of E8 with norm 4).
+One could also use more advanced multi-codebook quanti-
+zation approaches other than RVQ, but we found that RVQ
+was sufficient to achieve strong quantization performance.
+5. Fine-Tuning During Quantization
+Recent works have suggested that inter-layer interactions
+are important for lossless extreme quantization (Shao et al.,
+2024; Egiazarian et al., 2024). Here, we employ a simple
+fine-tuning algorithm that attempts to recover the original
+unquantized model during quantization. Our fine tuning
+method runs on a small development set and can be per-
+formed in around 50 GPU-hours for a 70B parameter model.
+First, we fine-tune within each transformer block by fine-
+tuning unquantized layers to compensate for already-
+quantized layers before quantization. This mitigates the acti-
+vation error caused by an individual linear layerduring quan-
+6
+
+===== PAGE 7 =====
+
+QuIP#
+Model Size (Bits)
+Wikitext2 Perplexity
+3.5
+4
+4.5
+5
+5.5
+6
+6.5
+7
+5E+10 1E+11
+QuIP# 2 Bit
+QuIP# 3 Bit
+QuIP# 4 Bit
+Wikitext2 Perplexity vs Total Model Size (Bits), Llama 1
+Figure 4. QuIP# scaling, Llama 1. Like Llama 2, QuIP # 3 bit
+scales better than QuIP# 4 bit for Llama 1 models and QuIP# 2
+bit scales similarly to higher bitrates.
+tization, and can be parallelized across transformer blocks.
+The idea of fine-tuning within a transformer block was pre-
+viously proposed in Egiazarian et al. (2024); our methodol-
+ogy differs in how we fine tune (before quantization) and
+the set of tunable parameters. Second, after all linear layers
+in the model are quantized, the remaining unquantized pa-
+rameters are fine-tuned to minimize activation error over the
+entire model. By optimizing the sign vectors as real vectors
+instead of binary vectors in both steps, we allow the inco-
+herence processing step to shape the weight matrix to the
+codebook. While this means we must store the sign vectors
+in FP16 instead of as bitvectors, the size of LLM matrices
+means that the sign vectors still add less than 0.01 bits per
+weight. We describe these steps in more detail in Section D.
+6. Experiments
+Our main experiments show the performance of QuIP# on
+the Llama 1 (Touvron et al., 2023a) and 2 (Touvron et al.,
+2023b) family of models. These models range in size from 7
+billion to 70 billion parameters and offer good performance,
+making them suitable for understanding how quantization
+methods perform and scale. Additional results for other
+models are available in the Appendix.
+In Section 6.1, we compare QuIP# with recently published
+weight-only PTQ methods. AWQ scales weights by activa-
+tion magnitudes before quantizing to reduce outliers (Lin
+et al., 2023). OmniQuant learns model-preserving layer-
+wise transformations that reduce outliers per transformer
+block (Shao et al., 2024). AQLM uses vector quantiza-
+tion with learnable unstructured 8D codebooks (Egiazarian
+et al., 2024)4. We report AQLM’s “1 × 16” numbers, which
+amounts to using a single codebook with 216 entries ∈ R8
+per linear layer. These codebooks each take up 1MiB of
+4We report results from the Jan 11, 2024 ArXiv version.
+space, making them too large to fit in the L1 cache of any
+current GPU and thus preventing fast inference (see Table
+6). Finally, we include QuIP (Chee et al., 2023) as a base-
+line for the improvements in QuIP#.
+We report WxA16 numbers for AWQ and OmniQuant from
+the OmniQuant paper and AQLM numbers from AQLM.
+We note that there are currently 2 methods for evaluating
+perplexity: using the Llama 1 context length of 2048 or
+using the model’s native context length (e.g. 4096 for Llama
+2). OmniQuant and AWQ use 2048 for Llama 2 while
+AQLM uses 4096; we report both sets of numbers. We also
+note that AQLM paper reports QuIP # numbers from an
+outdated version of QuIP#; the numbers here represent the
+latest QuIP# numbers. Finally, we bold numbers in our
+tables when they are clearly better, such as a smaller model
+matching or outperforming a larger model or a similar sized
+model significantly outperforming another model.
+6.1. QuIP# on Llama Models
+Table 2 shows a comparison of QuIP # with OmniQuant,
+AWQ, and QuIP# without fine tuning and E8P, with con-
+text length 2048. QuIP# offers a paradigm shift in quanti-
+zation quality over OmniQuant and AWQ. Notably, while
+AWQ falls apart at even 2.15 bits (Shao et al., 2024) and
+OmniQuant produces unusable models at 2 bits, QuIP #
+produces high quality models that are close to OmniQuant
+3 bit models. Table 2 also shows the importance of inco-
+herence processing. QuIP # without fine-tuning or lattice
+codebooks significantly outperforms OmniQuant and AWQ,
+which both rely on heuristics to reduce model outliers dur-
+ing quantization.
+Table 4 shows a comparison of QuIP# with AQLM with
+context length 4096. At 2 and 3 bits, QuIP# either signifi-
+cantly outperforms similar-sized AQLM models or achieves
+similar performance with a smaller model5. At 4 bits, both
+methods perform similarly. This is not surprising as state-of-
+the-art 4 bit models are all very close to FP16 performance.
+Furthermore, the QuIP# 3 and 4 bit results presented in this
+paper use residual vector quantization; one could potentially
+achieve better numbers with more advanced multi-codebook
+quantization approaches.
+Table 3 shows zeroshot results for QuIP #, AQLM, and
+OmniQuant. Both AQLM and QuIP# signficantly outper-
+form OmniQuant, which correlates with the perpelxity re-
+sults. AQLM and QuIP# both perform very close to FP16
+at higher bitrates and for larger models, but QuIP# tends to
+outperform AQLM at lower bitrates and model sizes. We
+note that zeroshot tasks have an element of randomness and
+even FP16 numbers can disagree by up to 0.5%.
+5In our experience, at extreme quantization levels, even 0.1 bits
+can make a significant difference in quantization quality.
+7
+
+===== PAGE 8 =====
+
+QuIP#
+Table 2. Llama 1 & 2 Wikitext2 and C4 perplexity (↓), context length 2048.
+WIKITEXT 2 C4
+METHOD BITS 1-7 1-13 1-30 1-65 2-7 2-13 2-70 1-7 1-13 1-30 1-65 2-7 2-13 2-70
+FP16 16 5.68 5.09 4.10 3.53 5.47 4.88 3.32 7.08 6.61 5.98 5.62 6.97 6.47 5.52
+AWQ 4 6.08 5.34 4.39 3.76 6.15 5.12 - 7.52 6.86 6.17 5.77 7.68 6.74 -
+OMNI Q 4 5.86 5.21 4.25 3.71 5.74 5.02 3.47 7.34 6.76 6.11 5.73 7.35 6.65 5.65
+QUIP# NO FT & NO E8 4 5.83 5.20 4.23 3.63 5.66 5.00 3.42 7.25 6.70 6.06 5.68 7.17 6.59 5.59
+QUIP# 4 5.76 5.17 4.18 3.60 5.56 4.95 3.38 7.18 6.67 6.03 5.66 7.07 6.54 5.56
+AWQ 3 11.9 7.45 10.0 5.21 24.0 10.5 - 13.3 9.13 12.7 7.11 23.9 13.1 -
+OMNI Q 3 6.49 5.68 4.74 4.04 6.58 5.58 3.92 8.19 7.32 6.57 6.07 8.65 7.44 6.06
+QUIP# NO FT & NO E8 3 6.29 5.52 4.54 3.91 6.19 5.34 3.71 7.82 6.98 6.29 5.86 7.85 6.98 5.78
+QUIP# 3 5.98 5.31 4.36 3.78 5.79 5.10 3.56 7.39 6.83 6.17 5.77 7.32 6.72 5.67
+OMNI Q 2 15.5 13.2 8.71 7.58 37.4 17.2 7.81 24.9 18.3 13.9 10.8 90.6 26.8 12.3
+QUIP# NO FT & NO E8 2 9.95 7.18 5.80 5.02 12.3 7.60 4.87 11.7 8.67 7.55 6.83 14.8 9.57 6.82
+QUIP# 2 6.86 5.97 5.02 4.36 6.66 5.74 4.16 8.36 7.48 6.71 6.19 8.35 7.45 6.12
+Table 3. Zeroshot Accuracy (acc in LM Eval, not acc_norm), Llama 2.
+2-70 2-13 2-7
+METHOD BITS ARCC A RCE P IQA W INO BITS ARCC A RCE P IQA W INO BITS ARCC A RCE P IQA W INO
+FP16 16 51.1 77.7 81.1 77.0 16 45.6 73.3 73.5 69.6 16 40.0 69.3 78.5 67.3
+OMNI Q 4 49.8 77.9 80.7 75.8 4 43.1 70.2 78.4 67.8 4 37.9 67.8 77.1 67.0
+QUIP 4 47.0 74.3 80.3 76.0 4 44.9 73.3 79.0 69.7 4 - - - -
+AQLM 4.07 51.0 78.1 81.4 76.9 3.94 43.9 72.2 78.6 70.4 4.04 40.3 68.9 77.7 67.3
+QUIP# 4 50.6 78.1 81.4 77.1 4 45.5 73.9 78.9 69.9 4 40.5 69.1 78.4 67.6
+OMNI Q 3 47.6 75.7 79.7 73.5 3 42.0 69.0 77.7 65.9 3 35.3 62.6 73.6 63.6
+QUIP 3 46.3 73.2 80.0 74.6 3 41.5 70.4 76.9 69.9 3 - - - -
+AQLM 3.01 50.0 77.6 81.3 77.2 3.03 43.6 73.5 77.8 67.6 3.04 38.7 67.8 76.6 68.4
+QUIP# 3 50.9 77.7 81.4 76.4 3 44.0 72.5 78.4 69.1 3 39.2 68.4 77.3 66.5
+OMNI Q 2 28.7 55.4 68.8 53.2 2 23.0 44.4 62.6 52.6 2 21.6 35.2 57.5 51.5
+QUIP 2 34.0 62.2 74.8 67.5 2 23.5 45.2 62.0 52.8 2 19.4 26.0 54.6 51.8
+AQLM 2.07 47.9 77.7 80.4 75.9 1.97 38.5 67.0 75.1 69.5 2.02 33.6 62.8 73.5 64.6
+QUIP# 2 48.7 77.3 80.3 75.9 2 39.5 69.3 77.3 67.7 2 34.6 64.6 75.1 64.9
+6.2. QuIP# Bit Scaling
+Figures 1 (first page) and 4 show how QuIP# scales on the
+Llama family of models and Wikitext2. On both Llama 1
+and 2, QuIP# 3 bit outperforms QuIP# 4 bit and QuIP# 2
+bit offers similar scaling to 3 and 4 bit models. Furthermore,
+on Llama 2, QuIP# 3 bit outperforms a theoretical lossless
+4 bit model (FP16 at 4 bits). To the best of our knowledge,
+this is the first time a 3 bit PTQ method has outperformed a
+theoretical lossless 4 bit model and also the first time a 2 bit
+PTQ method has offered similar scaling to higher bitrates.
+6.3. Efficient Inference with QuIP#
+One of the key benefits of PTQ is to increase the maximum
+possible inference throughput on a given device. Since
+small-batch autoregressive decoding is usually memory
+bound, a smaller model requires less data to be read and
+can therefore be served faster. However, achieving an ac-
+tual speedup requires a quantization method with low de-
+coding overhead, or inference will be bottlenecked by de-
+coding. For example, the AQLM models in the experiment
+tables use a different216 ×8 codebook for every linear layer.
+Each entry in these codebooks takes 2 bytes, meaning that
+each codebook is 1MiB. During inference, weights are read
+from these codebook in an essentialy random access pat-
+tern, meaning that the entire codebook must fit in L1 cache
+to enable fast inference (even L2 cache is too slow). How-
+ever, 1MiB is larger than any current GPU’s L1 cache (the
+H100 has 256KB), so AQLM inference suffers from high
+cache miss rates and is actually slower than FP16 on mod-
+ern GPUs (Table 6).
+In contrast, QuIP# was designed around fast inference. The
+RHT can be computed in essentially O(n log n) time and
+E8P only requires 1KiB and can be decoded from with very
+few (< 5) instructions per weight. Table 5 shows QuIP#’s
+generation speed as measured with the FlashAttention li-
+brary’s (Dao et al., 2022; Dao, 2023) implementation of
+Llama. QuIP# is able to achieve over 50% of peak mem-
+ory bandwidth with a 2 bit model even with minimal kernel
+fusion in the RHT, validating our design choices. We note
+that since these “fast inference design choices” essentially
+amount to restrictions on what can be done during quanti-
+zation, it should be entirely possible to achieve even better
+quantization quality at the expense of inference speed.
+8
+
+===== PAGE 9 =====
+
+QuIP#
+Table 4. Wikitext2 and C4 perplexity (↓), context length 4096.
+2-7 2-13 2-70
+METHOD BITS W2 C4 B ITS W2 C4 B ITS W2 C4
+FP16 16 5.12 6.63 16 4.57 6.05 16 3.12 4.97
+QUIP# 4 5.19 6.75 4 4.63 6.13 4 3.18 5.02
+ë NO FT 4 5.22 6.79 4 4.65 6.15 4 3.18 5.02
+ë NO E8 4 5.29 6.86 4 4.68 6.20 4 3.22 5.05
+QUIP 4 - - 4 4.76 6.29 4 3.58 5.38
+AQLM 4.04 5.21 6.74 3.94 4.64 6.14 4.07 3.17 5.01
+QUIP# 3 5.41 7.04 3 4.78 6.35 3 3.35 5.15
+ë NO FT 3 5.60 7.34 3 4.90 6.50 3 3.41 5.20
+ë NO E8 3 5.77 7.61 3 4.99 6.65 3 3.48 5.28
+QUIP 3 - - 3 5.12 6.79 3 3.87 5.67
+AQLM 3.04 5.46 7.10 3.03 4.83 6.37 3.01 3.36 5.17
+QUIP# 2 6.19 8.16 2 5.35 7.20 2 3.91 5.71
+ë NO FT 2 8.22 11.0 2 6.06 8.07 2 4.16 6.01
+ë NO E8 2 11.2 14.5 2 7.04 9.37 2 4.58 6.51
+QUIP 2 - - 2 13.5 16.2 2 5.90 8.17
+AQLM 2.02 6.93 8.84 1.97 5.70 7.59 2.07 3.94 5.72
+Table 5. QuIP# generation throughput on a NVIDIA RTX 4090
+using the FlashAttention library’s Llama implementation. QuIP#
+achieves > 50% peak memory bandwidth (1TB/s) during genera-
+tion and admits fast inference.
+MODEL 2 BIT
+TOK /S
+2 BIT %
+MEM BW
+4 BIT
+TOK /S
+4 BIT %
+MEM BW
+2-7B 170.50 29.60% 117.73 40.87%
+2-13B 104.83 33.80% 71.09 45.84%
+1-30B 51.60 38.39% 32.50 48.36%
+2-70B 32.74 56.84% OOM OOM
+Finally, if we look at the speed-quality tradeoffs of differ-
+ent quantization methods, we also find that QuIP# enables
+new frontiers of PTQ performance. Compared to QuIP’s
+published throughput numbers (measured on an A6000),
+QuIP# on an A6000 achieves roughly twice the inference
+throughput at the same bitrate, making QuIP# strictly better.
+Compared to existing “fast inference” quantization meth-
+ods such as SpQR (Dettmers et al., 2023) and SqueezeLLM
+(Kim et al., 2023), we again find that QuIP# offers signif-
+icantly higher throughput ( > 40%) at the same or better
+quantization quality.
+Table 6. QuIP# vs AQLM and FP16 generation throughput on
+a NVIDIA RTX 4090 using the HuggingFace library’s Llama
+implementation. Unlike AQLM, whose codebook is too large to fit
+in L1 cache, QuIP# achieves significant speedups over FP16.
+METHOD 2-7B 2-70B
+FP16 33.1 TOK /S OOM
+AQLM 2 B IT 20.6 8.27
+QUIP# 2 B IT 106.3 25.9
+6.4. Ablations
+Table 4 also contains an ablation on the various components
+of QuIP#. The “no FT” row shows QuIP # without fine-
+tuning and the “no E8” row shows QuIP # without fine-
+tuning and lattice codebooks. For the latter, we round to the
+1-dimensional half-integer grid. We also include QuIP num-
+bers as reported by AQLM. At all bitrates, each component
+of QuIP# brings additional performance gains. The differ-
+ence between QuIP and QuIP# without fine-tuning and lat-
+tice codebooks also shows the difference between QuIP’s
+Kronecker factorization and QuIP#’s RHT. The RHT offers
+stronger incoherence properties than the Kronecker factor-
+ization (Section 3), which improves performance.
+7. Conclusion
+We present QuIP#, a weight-only post training compres-
+sion method that achieves state-of-the-art results on LLMs
+at 2, 3, and 4 bits per weight. QuIP# uses the Randomized
+Hadamard Transform as an efficient and principled form
+of outlier suppression, and introduces the E8 lattice-based
+E8P codebook to better quantize RHT transformed weights.
+The E8P codebook is highly symmetric and admits fast in-
+ference, allowing a “proof of concept” QuIP# CUDA im-
+plementation to achieve over 50% peak memory bandwidth
+on modern GPUs. QuIP# also implements inter-layer fine
+tuning, further improving quantization. To the best of our
+knowledge, QuIP# is the first PTQ method to achieve su-
+perior scaling at 3 bits over 4 bits and similar scaling at 2
+bits to higher bitrates. Our results indicate that, in the near
+future, 2 bit models are likely to scale better than 3 bit ones.
+Impact Statement
+This paper presents work whose goal is to advance the field
+of Machine Learning. There are many potential societal
+consequences of our work, none which we feel must be
+specifically highlighted here.
+Acknowledgements
+We thank, in no particular order, David Hou for helping with
+the QuIP# CUDA implementation, Tiancheng Yuan for
+lending his RTX 4090 and helping with acquiring QuIP#
+timing numbers, Tri Dao for a fast CUDA implementation
+of the Hadamard transform and general help with QuIP#,
+and Together AI for compute resources.
+References
+Almazrouei, E., Alobeidli, H., Alshamsi, A., Cappelli, A.,
+Cojocaru, R., Debbah, M., ´Etienne Goffinet, Hesslow,
+D., Launay, J., Malartic, Q., Mazzotta, D., Noune, B.,
+9
+
+===== PAGE 10 =====
+
+QuIP#
+Pannier, B., and Penedo, G. The falcon series of open
+language models, 2023.
+Chee, J., Renz, M., Damle, A., and Sa, C. D. Model
+preserving compression for neural networks. In Oh,
+A. H., Agarwal, A., Belgrave, D., and Cho, K. (eds.),
+Advances in Neural Information Processing Systems ,
+2022. URL https://openreview.net/forum?
+id=gt-l9Hu2ndd.
+Chee, J., Cai, Y ., Kuleshov, V ., and Sa, C. D. QuIP: 2-bit
+quantization of large language models with guarantees.
+In Thirty-seventh Conference on Neural Information Pro-
+cessing Systems, 2023. URL https://openreview.
+net/forum?id=xrk9g5vcXR.
+Cochran, W., Cooley, J., Favin, D., Helms, H., Kaenel, R.,
+Lang, W., Maling, G., Nelson, D., Rader, C., and Welch,
+P. What is the fast fourier transform? Proceedings of
+the IEEE, 55(10):1664–1674, 1967. doi: 10.1109/PROC.
+1967.5957.
+Computer, T. Redpajama: An open source recipe
+to reproduce llama training dataset, 2023. URL
+https://github.com/togethercomputer/
+RedPajama-Data.
+Dao, T. FlashAttention-2: Faster attention with better paral-
+lelism and work partitioning. 2023.
+Dao, T., Fu, D. Y ., Ermon, S., Rudra, A., and R´e, C. FlashAt-
+tention: Fast and memory-efficient exact attention with
+IO-awareness. In Advances in Neural Information Pro-
+cessing Systems, 2022.
+Dettmers, T. and Zettlemoyer, L. The case for 4-bit preci-
+sion: k-bit inference scaling laws. In Krause, A., Brun-
+skill, E., Cho, K., Engelhardt, B., Sabato, S., and Scarlett,
+J. (eds.), Proceedings of the 40th International Confer-
+ence on Machine Learning, volume 202 ofProceedings of
+Machine Learning Research, pp. 7750–7774. PMLR, 23–
+29 Jul 2023. URL https://proceedings.mlr.
+press/v202/dettmers23a.html.
+Dettmers, T., Svirschevski, R., Egiazarian, V ., Kuznedelev,
+D., Frantar, E., Ashkboos, S., Borzunov, A., Hoefler, T.,
+and Alistarh, D. Spqr: A sparse-quantized representation
+for near-lossless llm weight compression, 2023.
+Egiazarian, V ., Panferov, A., Kuznedelev, D., Frantar, E.,
+Babenko, A., and Alistarh, D. Extreme compression of
+large language models via additive quantization, 2024.
+Fino and Algazi. Unified matrix treatment of the fast walsh-
+hadamard transform. IEEE Transactions on Comput-
+ers, C-25(11):1142–1146, 1976. doi: 10.1109/TC.1976.
+1674569.
+Frantar, E., Ashkboos, S., Hoefler, T., and Alistarh, D.
+OPTQ: Accurate quantization for generative pre-trained
+transformers. In The Eleventh International Conference
+on Learning Representations, 2023. URL https://
+openreview.net/forum?id=tcbBPnfwxS.
+Gao, L., Tow, J., Abbasi, B., Biderman, S., Black, S., DiPofi,
+A., Foster, C., Golding, L., Hsu, J., Le Noac’h, A., Li,
+H., McDonell, K., Muennighoff, N., Ociepa, C., Phang,
+J., Reynolds, L., Schoelkopf, H., Skowron, A., Sutawika,
+L., Tang, E., Thite, A., Wang, B., Wang, K., and Zou,
+A. A framework for few-shot language model evaluation,
+12 2023. URL https://zenodo.org/records/
+10256836.
+Halko, N., Martinsson, P.-G., and Tropp, J. A. Finding
+structure with randomness: Probabilistic algorithms for
+constructing approximate matrix decompositions. SIAM
+review, 53(2):217–288, 2011.
+Hedayat, A. and Wallis, W. D. Hadamard Matrices and
+Their Applications. The Annals of Statistics, 6(6):1184 –
+1238, 1978. doi: 10.1214/aos/1176344370. URL https:
+//doi.org/10.1214/aos/1176344370.
+Jiang, A. Q., Sablayrolles, A., Roux, A., Mensch, A., Savary,
+B., Bamford, C., Chaplot, D. S., de las Casas, D., Hanna,
+E. B., Bressand, F., Lengyel, G., Bour, G., Lample, G.,
+Lavaud, L. R., Saulnier, L., Lachaux, M.-A., Stock, P.,
+Subramanian, S., Yang, S., Antoniak, S., Scao, T. L.,
+Gervet, T., Lavril, T., Wang, T., Lacroix, T., and Sayed,
+W. E. Mixtral of experts, 2024.
+Juang, B.-H. and Gray, A. Multiple stage vector quantization
+for speech coding. In ICASSP ’82. IEEE International
+Conference on Acoustics, Speech, and Signal Processing,
+volume 7, pp. 597–600, 1982. doi: 10.1109/ICASSP.
+1982.1171604.
+Kim, S., Hooper, C., Gholami, A., Dong, Z., Li, X., Shen,
+S., Mahoney, M., and Keutzer, K. Squeezellm: Dense-
+and-sparse quantization. arXiv, 2023.
+Kingma, D. P. and Ba, J. Adam: A method for stochastic
+optimization, 2017.
+Kostina, V . and Verd´u, S. Fixed-length lossy compression
+in the finite blocklength regime: Gaussian source. 2011
+IEEE Information Theory Workshop, ITW 2011, 10 2011.
+doi: 10.1109/ITW.2011.6089501.
+Lin, J., Tang, J., Tang, H., Yang, S., Dang, X., Gan, C., and
+Han, S. Awq: Activation-aware weight quantization for
+llm compression and acceleration, 2023.
+Liu, Z., Oguz, B., Zhao, C., Chang, E., Stock, P., Mehdad,
+Y ., Shi, Y ., Krishnamoorthi, R., and Chandra, V . Llm-qat:
+Data-free quantization aware training for large language
+models, 2023.
+10
+
+===== PAGE 11 =====
+
+QuIP#
+Lloyd, S. Least squares quantization in pcm. IEEE Transac-
+tions on Information Theory, 28(2):129–137, 1982. doi:
+10.1109/TIT.1982.1056489.
+Nagel, M., Amjad, R. A., Van Baalen, M., Louizos, C., and
+Blankevoort, T. Up or down? Adaptive rounding for
+post-training quantization. In III, H. D. and Singh, A.
+(eds.), Proceedings of the 37th International Conference
+on Machine Learning , volume 119 of Proceedings of
+Machine Learning Research, pp. 7197–7206. PMLR, 13–
+18 Jul 2020. URL https://proceedings.mlr.
+press/v119/nagel20a.html.
+Nagel, M., Fournarakis, M., Bondarenko, Y ., and
+Blankevoort, T. Overcoming oscillations in quantization-
+aware training. In Chaudhuri, K., Jegelka, S., Song,
+L., Szepesvari, C., Niu, G., and Sabato, S. (eds.), Pro-
+ceedings of the 39th International Conference on Ma-
+chine Learning, volume 162 of Proceedings of Machine
+Learning Research, pp. 16318–16330. PMLR, 17–23 Jul
+2022. URL https://proceedings.mlr.press/
+v162/nagel22a.html.
+Nguyen, E., Poli, M., Faizi, M., Thomas, A., Birch-Sykes,
+C., Wornow, M., Patel, A., Rabideau, C., Massaroli, S.,
+Bengio, Y ., Ermon, S., Baccus, S. A., and R´e, C. Hye-
+nadna: Long-range genomic sequence modeling at single
+nucleotide resolution. 2023.
+Rozi`ere, B., Gehring, J., Gloeckle, F., Sootla, S., Gat, I.,
+Tan, X. E., Adi, Y ., Liu, J., Sauvestre, R., Remez, T.,
+Rapin, J., Kozhevnikov, A., Evtimov, I., Bitton, J., Bhatt,
+M., Ferrer, C. C., Grattafiori, A., Xiong, W., D ´efossez,
+A., Copet, J., Azhar, F., Touvron, H., Martin, L., Usunier,
+N., Scialom, T., and Synnaeve, G. Code llama: Open
+foundation models for code, 2024.
+Shao, W., Chen, M., Zhang, Z., Xu, P., Zhao, L., Li, Z.,
+Zhang, K., Gao, P., Qiao, Y ., and Luo, P. Omniquant:
+Omnidirectionally calibrated quantization for large lan-
+guage models. In The Twelfth International Conference
+on Learning Representations, 2024. URL https://
+openreview.net/forum?id=8Wuvhh0LYW.
+Sloane, N. Hadamard Matrices — neilsloane.com. http:
+//neilsloane.com/hadamard/. [Accessed 02-
+02-2024].
+Sun, M., Liu, Z., Bair, A., and Kolter, J. Z. A simple and
+effective pruning approach for large language models. In
+Workshop on Efficient Systems for Foundation Models
+@ ICML2023, 2023. URL https://openreview.
+net/forum?id=tz9JV2PRSv.
+Touvron, H., Lavril, T., Izacard, G., Martinet, X., Lachaux,
+M.-A., Lacroix, T., Rozi`ere, B., Goyal, N., Hambro, E.,
+Azhar, F., Rodriguez, A., Joulin, A., Grave, E., and Lam-
+ple, G. Llama: Open and efficient foundation language
+models, 2023a.
+Touvron, H., Martin, L., Stone, K., Albert, P., Almahairi,
+A., Babaei, Y ., Bashlykov, N., Batra, S., Bhargava, P.,
+Bhosale, S., Bikel, D., Blecher, L., Ferrer, C. C., Chen,
+M., Cucurull, G., Esiobu, D., Fernandes, J., Fu, J., Fu, W.,
+Fuller, B., Gao, C., Goswami, V ., Goyal, N., Hartshorn,
+A., Hosseini, S., Hou, R., Inan, H., Kardas, M., Kerkez,
+V ., Khabsa, M., Kloumann, I., Korenev, A., Koura, P. S.,
+Lachaux, M.-A., Lavril, T., Lee, J., Liskovich, D., Lu, Y .,
+Mao, Y ., Martinet, X., Mihaylov, T., Mishra, P., Molybog,
+I., Nie, Y ., Poulton, A., Reizenstein, J., Rungta, R., Saladi,
+K., Schelten, A., Silva, R., Smith, E. M., Subramanian, R.,
+Tan, X. E., Tang, B., Taylor, R., Williams, A., Kuan, J. X.,
+Xu, P., Yan, Z., Zarov, I., Zhang, Y ., Fan, A., Kambadur,
+M., Narang, S., Rodriguez, A., Stojnic, R., Edunov, S.,
+and Scialom, T. Llama 2: Open foundation and fine-tuned
+chat models, 2023b.
+Viazovska, M. The sphere packing problem in dimen-
+sion 8. Annals of Mathematics , 185(3), May 2017.
+ISSN 0003-486X. doi: 10.4007/annals.2017.185.3.
+7. URL http://dx.doi.org/10.4007/annals.
+2017.185.3.7.
+Xi, H., Li, C., Chen, J., and Zhu, J. Training transformers
+with 4-bit integers. In Thirty-seventh Conference on Neu-
+ral Information Processing Systems, 2023. URL https:
+//openreview.net/forum?id=H9hWlfMT6O.
+11
+
+===== PAGE 12 =====
+
+QuIP#
+A. Concentration Inequalities for the Randomized Hadamard Transform and Fast Fourier
+Transform
+A.1. Incoherence Processing with the Randomized Hadamard Transform
+Lemma A.1. For any non-negative real numbern,
+1
+B (n, 1/2)
+Z +1
+−1
+(1 − x2)n−1 · exp(tx) dx ≤ exp
+ t2
+4n + 2
+
+.
+Proof. We start with the following “standard” integral. For non-negative integerm and real n > 0,
+Z +1
+−1
+x2m(1 − x2)n−1 dx = B
+
+m + 1
+2 , n
+
+= Γ
+ 
+m + 1
+2
+
+Γ (n)
+Γ
+ 
+m + n + 1
+2
+ .
+This means that
+1
+B
+  1
+2 , n
+
+Z +1
+−1
+x2m(1 − x2)n−1 dx = B
+ 
+m + 1
+2 , n
+
+B
+  1
+2 , n
+
+= Γ
+ 
+m + 1
+2
+
+Γ (n)
+Γ
+ 
+m + n + 1
+2
+ · Γ
+ 
+n + 1
+2
+
+Γ
+  1
+2
+
+Γ (n)
+= Γ
+ 
+m + 1
+2
+
+Γ
+ 
+n + 1
+2
+
+√π · Γ
+ 
+m + n + 1
+2
+ .
+Applying the Legendre duplication formula, for integer m,
+Γ
+
+m + 1
+2
+
+= (2m)! √π
+4mm! ,
+then
+1
+B
+  1
+2 , n
+
+Z +1
+−1
+x2m(1 − x2)n−1 dx = (2m)! √π
+4mm! · (2n)! √π
+4nn! · 1√π · 4m+n(m + n)!
+(2m + 2n)! √π
+= (2m)! (2n)! (m + n)!
+m! n! (2m + 2n)! .
+12
+
+===== PAGE 13 =====
+
+QuIP#
+In particular, this means that
+1
+B
+  1
+2 , n
+
+Z +1
+−1
+exp(tx)(1 − x2)n−1 dx =
+∞X
+m=0
+t2m
+(2m)! · 1
+B
+  1
+2 , n
+
+Z +1
+−1
+x2m(1 − x2)n−1 dx
+=
+∞X
+m=0
+t2m
+(2m)! · (2m)! (2n)! (m + n)!
+m! n! (2m + 2n)!
+=
+∞X
+m=0
+t2m
+m! · (2n)! (m + n)!
+n! (2m + 2n)!
+=
+∞X
+m=0
+t2m
+m! ·
+mY
+k=1
+k + n
+(2k + 2n)(2k + 2n − 1)
+=
+∞X
+m=0
+t2m
+m! · 1
+2m
+mY
+k=1
+1
+2k + 2n − 1
+≤
+∞X
+m=0
+t2m
+m! · 1
+2m
+ 1
+2n + 1
+m
+=
+∞X
+m=0
+1
+m!
+ t2
+4n + 2
+m
+= exp
+ t2
+4n + 2
+
+.
+This proves the lemma
+1
+B (n, 1/2)
+Z +1
+−1
+(1 − x2)n−1 · exp(tx) dx ≤ exp
+ t2
+4n + 2
+
+.
+Lemma A.2. Call U ∈ Rnd×nd an (n, d)-block orthohadamard matrix if it has the following properties: (1) U is a
+orthogonal matrix, and (2) each aligned d × d block of U is 1/√n times an orthogonal matrix. This generalizes the notion
+of Hadamard matrices. Let S ∈ Rnd×nd be a random block diagonal matrix, where each d × d block of the diagonal is
+sampled independently and uniformly from the set of (possibly special) orthogonal matrices. Then we call multiplication by
+U S a randomized orthohadamard transform, and observe that it has the following nice property. Let x ∈ Rnd be any fixed
+vector, and let b ∈ Rnd be a fixed vector that is sparse in the sense that it is supported only on a single d-sized aligned block
+(i.e. all but one of the n blocks are zero). Then
+P
+ bT U Sx
+ ≥ a
+
+≤ 2 exp
+ 
+− a2nd
+2 ∥b∥2 ∥x∥2
+!
+.
+Proof. If we let the ith block of x be xi ∈ Rd and let the ith block of ST U T bT be vi, then the vi will be independent and
+uniformly distributed on the sphere in d dimensional space of radius ∥b∥ /√n, and so vT
+i xi = ∥b∥ ∥xi∥ n−1/2zi, where the
+zi are all independent and distributed according to an entry of a random point on the unit sphere in d dimensional space.
+Observe that this means that
+P(zi) ∝ (1 − z2
+i )
+d−1
+2 −1.
+13
+
+===== PAGE 14 =====
+
+QuIP#
+So,
+E
+
+exp
+ 
+tbT U Sx
+
+= E
+"
+exp
+ 
+t
+nX
+i=1
+∥b∥ ∥xi∥ n−1/2zi
+!#
+=
+nY
+i=1
+E
+h
+exp
+
+t ∥b∥ ∥xi∥ n−1/2zi
+i
+≤
+nY
+i=1
+E
+"
+exp
+ 
+1
+4 · d−1
+2 + 2
+!
+t ∥b∥ ∥xi∥ n−1/2
+2
+#
+=
+nY
+i=1
+E
+"
+exp
+ 
+t2 ∥b∥2 ∥xi∥2
+2nd
+!#
+= E
+"
+exp
+ 
+t2 ∥b∥2 ∥x∥2
+2nd
+!#
+,
+where the the last line follows from Lemma A.1. It follows from the standard application of Markov’s inequality that for any
+a > 0,
+P
+ bT U Sx
+ ≥ a
+
+≤ 2 exp
+ 
+− a2nd
+2 ∥b∥2 ∥x∥2
+!
+.
+This is what we wanted to show.
+Lemma A.3. Let H ∈ Rn×n be an orthogonal scaled Hadamard matrix or F ∈ Rn×n be an orthogonal FFT matrix (the
+FFT understood as operating on a real vector space). Let S ∈ Rn×n be a random diagonal matrix with diagonal elements
+supported on Rn, and let P ∈ Rn×n be a random 2-block-diagonal matrix with 2 × 2 diagonal blocks supported on SO(2)
+(we can also think of this as acting like a diagonal complex matrix with each diagonal element a random complex number of
+absolute value 1). Let U ∈ Rn×n be any fixed orthogonal matrix. Then, for any ϵ > 0,
+Prob
+ 
+max
+i,j
+eT
+i HSU ej
+ ≥
+s
+2
+nd log
+2n2
+ϵ
+!
+≤ ϵ
+and
+Prob
+ 
+max
+i,j
+eT
+i F P U ej
+ ≥
+s
+2
+nd log
+2n2
+ϵ
+!
+≤ ϵ.
+That is, with probability at least 1 − ϵ, multiplying by either HS or F P makes the resulting orthogonal matrix µ-incoherent,
+where
+µH =
+s
+2 log
+2n2
+ϵ
+
+.
+Proof. Setting b = ei and x = U ej in Lemma A.2,
+P
+ eT
+i HSU ej
+ ≥ a
+
+≤ 2 exp
+
+− a2nd
+2
+
+.
+By the union bound,
+P
+
+max
+i,j
+eT
+i HSU ej
+ ≥ a
+
+≤ 2n2 exp
+
+− a2nd
+2
+
+.
+Setting
+a2 = 2
+nd log
+2n2
+ϵ
+
+proves the lemma. The FFT case is identical.
+14
+
+===== PAGE 15 =====
+
+QuIP#
+Algorithm 4 Incoherence Processing with RFFT (IP-RFFT)
+input W ∈ Rm×n, H ∈ Rn×n
+Sample phase vectors
+θV ∼ U [0, 2π]n/2, θU ∼ U [0, 2π]m/2
+SV = cos(θV ) + i sin(θV ), SU = cos(θU) + i sin(θU)
+ˆW ← FFT(diag(SU)FFT(diag(SV )W T )T ) where
+FFT is the Fast Fourier transform (Sec. A.2)
+ˆH ← FFT(diag(SV )FFT(diag(SV )H)T )
+output ˆW , ˆH, SU , SV
+Lemma A.4. Let HL ∈ Rm×m be an orthogonal scaled Hadamard matrix or F ∈ Rm×m be an orthogonal FFT matrix
+(the FFT understood as operating on a real vector space). Let SL ∈ Rm×m be a random diagonal matrix with diagonal
+elements supported on Rm, and let P ∈ Rm×m be a random 2-block-diagonal matrix with 2 × 2 diagonal blocks supported
+on SO(2). Let HR ∈ Rn×n, FR, SR, and PR be defined analogously over n-dimensional space. Let W ∈ Rm×n be any
+fixed matrix. Then, for any ϵ > 0,
+P
+ 
+max
+i,j
+eT
+i HLSLW ST
+RH T
+R ej
+ ≥ ∥W ∥F
+r
+4
+mn log
+4mn
+ϵ
+!
+≤ ϵ.
+and
+P
+ 
+max
+i,j
+eT
+i FLPLW P T
+R F T
+R ej
+ ≥ ∥W ∥F
+r
+4
+mn log
+4mn
+ϵ
+!
+≤ ϵ.
+That is, with probability at least 1 − ϵ, multiplying on both sides by a randomized Hadamard transform or a randomized
+FFT yields a weight matrix that is µW -incoherent, where
+µW = 2 log
+4mn
+ϵ
+
+.
+Proof. From Lemma A.2,
+P
+ 
+bT U Sx
+ ≥ ∥b∥ ∥x∥
+s
+2
+n log
+4mn
+ϵ
+!
+≤ ϵ
+2mn .
+By applying this once on each side to the rows and columns respectively, and union bounding over themn entries, we get
+P
+ 
+eT
+i HLSLW ST
+RH T
+R ej
+ ≥ ∥W ∥F
+r
+4
+mn log
+4mn
+ϵ
+!
+≤ ϵ.
+The proof in the FFT case is identical.
+Lemma 3.1. Let H be any positive semidefinite matrix on Rn×n and W any weight matrix on Rm×n. Let U ∈ Rm×m and
+V ∈ Rn×n be orthogonal scaled Hadamard matrices. Let SU ∈ Rm×m and SV ∈ Rn×n be random diagonal matrices
+with independent diagonal elements drawn uniformly from {−1, +1}. Then for any δ > 0, V SV HS V V T is µH-incoherent
+with probability at least 1 − δ, and U SU W SV V T is µW -incoherent with probability at least 1 − δ, where
+µH =
+s
+2 log
+2n2
+δ
+
+and µW = 2 log
+4mn
+δ
+
+.
+Proof. The incoherence of H follows from the application of Lemma A.3. The incoherence of W follows from the
+application of Lemma A.4.
+15
+
+===== PAGE 16 =====
+
+QuIP#
+A.2. Incoherence Processing with the Randomized Fast Fourier Transform (RFFT)
+Here we described the Randomized Fast Fourier Transform (RFFT), x → V Sx where V ∈ Cn/2×n/2 is the discrete
+Fourier transform matrix, S ∈ Cn/2 is a random complex phase vector, and x ∈ Rn. The discrete Fourier transform can be
+computed in O(n log n) time via the fast Fourier transform. Here it is understood that the FFT operates over the reals, in
+that a vector x ∈ Rn is mapped to a complex representation Cn/2, the RFFT is performed, and the resulting vector mapped
+back to Rn. Here the mapping simply represents reshaping real-valued x into dimension (n/2, 2), and interpreting the
+corresponding 2-tuples as a complex number.
+Incoherence processing via the RFFT achieves similar theoretical guarantees as the RHT, see Lemmas A.3 and A.4.
+Ultimately the choice of the orthogonal transformation is up to the user. A Fourier transform works almost as well as a
+Hamard transform in practice (Table 1), so if a fast Hadamard implementation is not available, the FFT is a good option.
+B. Block LDLQ
+Lemma B.1. Let H ∈ Rnd×nd be a positive definite matrix with d-block LDL decomposition H = LT DL. Then
+tr (D) ≤ tr
+
+H 1/2
+
+·
+H 1/2 ⊙ MD
+
+2
+,
+where MD = I ⊗ 1d×d is the block diagonal mask. If, in addition, H is µ-incoherent in the sense that its matrix of
+eigenvectors U has
+∥Uij∥≤ µ√
+nd
+,
+then
+tr (D) ≤ µ2
+n tr
+
+H 1/2
+2
+.
+Proof. Consider the optimization problem
+minimize: tr
+ 
+RT HR
+
+subject to: R unit block lower diagonal.
+Observe that the derivative of the loss is
+∇f(R) = HR.
+If R = L−1, then HR = LT D. But this must be a block upper triangular matrix, because it’s the product of a unit upper
+triangular matrix (LT ) and a block diagonal matrix D. It follows that ∇f(L−1) is zero in all the directions in which we
+could move R, since R only varies in the strictly lower triangular directions. Therefore, R = L−1 is the solution to this
+optimization problem, and for any R, ∇f(R) ≥ ∇f(L−1) = tr (D).
+Now, let M denote the strictly block lower triangular mask, and observe that M + M T + MD = 1nd×nd. Set α =H 1/2 ⊙ MD
+−1
+2 , and consider R =
+ 
+I + αM ⊙ H 1/2−1
+. Observe that
+
+I + αM ⊙ H 1/2
+T
+I + αM ⊙ H 1/2
+
+= I + αM ⊙ H 1/2 + αM T ⊙ H 1/2 + α2(M T ⊙ H 1/2)(M ⊙ H 1/2)
+⪰ I + α(M + M T ) ⊙ H 1/2
+⪰ αMD ⊙ H 1/2 + α(M + M T ) ⊙ H 1/2
+⪰ αH 1/2.
+It follows by inverting both sides that RRT ⪯ α−1H −1/2.
+So, for this R,
+tr
+ 
+RT HR
+
+= tr
+ 
+HRR T
+≤ α−1 tr
+
+H 1/2
+
+.
+16
+
+===== PAGE 17 =====
+
+QuIP#
+This proves the first part of the lemma. For the second part, observe that
+H 1/2 ⊙ MD
+
+2
+≤
+ndX
+i=1
+λ1/2
+i
+(uiuT
+i ) ⊙ MD
+
+2
+≤ µ2
+n tr
+
+H 1/2
+
+.
+This proves the lemma.
+Theorem 4.1. Suppose that we round W ∈ Rm×n using g-block LDLQ with Hessian H, producing ˆW . Suppose that H is
+µ-incoherent, and that we use a (possibly stochastic) vector quantizer Q that satisfies E[(Q(x) − x)(Q(x) − x)T ] ⪯ σ2I
+for any x ∈ Rg. Then
+E[tr(( ˆW − W )H( ˆW − W )T )] ≤ gmµ2σ2
+n tr(H 1/2)2.
+Proof. First recall that from the description of block LDLQ,
+ˆWk = Q(Wk + (W:(k−1) − ˆW:(k−1))Ak).
+We can also write this in matrix form in terms of the matrix Lk as
+ˆW = Q(W + (W − ˆW )(LT − I)).
+Here, Q is interpreted as operating independently block-wise. Let η denote the quantization error
+η = (W + (W − ˆW )(LT − I)) − Q(W + (W − ˆW )(LT − I)).
+Then
+ˆW = (W + (W − ˆW )(LT − I)) − η,
+which simplifies to
+(W − ˆW )LT = η.
+This means that
+E[tr(( ˆW − W )H( ˆW − W )T )] = E[tr(( ˆW − W )LT DL( ˆW − W )T )] = E[tr(ηT Dη)].
+But by assumption, E[ηη T ] ⪯ mσ2I (since each block is just an independent application of Q and we sum over m rows), so
+E[tr(( ˆW − W )H( ˆW − W )T )] ≤ mσ2E[tr(D)].
+Combining this with the result of Lemma B.1 proves the theorem.
+C. E8P details
+C.1. Constructing S
+We use the following 29 elements of ˆD8 with norm squared 12 to pad S to 256 entries.
+([3, 1, 1, 1, 3, 3, 3, 3] [1, 3, 1, 1, 3, 3, 3, 3] [1, 1, 3, 1, 3, 3, 3, 3]
+[1, 1, 1, 3, 3, 3, 3, 3] [3, 3, 3, 1, 3, 3, 1, 1] [3, 3, 3, 1, 3, 1, 3, 1]
+[3, 3, 3, 1, 1, 3, 3, 1] [3, 3, 3, 1, 3, 1, 1, 3] [3, 3, 3, 1, 1, 3, 1, 3]
+[3, 3, 3, 1, 1, 1, 3, 3] [3, 3, 1, 3, 3, 3, 1, 1] [3, 3, 1, 3, 3, 1, 3, 1]
+[3, 3, 1, 3, 1, 3, 3, 1] [3, 3, 1, 3, 3, 1, 1, 3] [3, 3, 1, 3, 1, 3, 1, 3]
+[3, 3, 1, 3, 1, 1, 3, 3] [3, 1, 3, 3, 3, 3, 1, 1] [3, 1, 3, 3, 3, 1, 3, 1]
+[3, 1, 3, 3, 1, 3, 3, 1] [3, 1, 3, 3, 3, 1, 1, 3] [3, 1, 3, 3, 1, 3, 1, 3]
+[1, 3, 3, 3, 1, 1, 3, 3] [1, 3, 3, 3, 3, 3, 1, 1] [1, 3, 3, 3, 3, 1, 3, 1]
+[1, 3, 3, 3, 1, 3, 3, 1] [1, 3, 3, 3, 3, 1, 1, 3] [1, 3, 3, 3, 1, 3, 1, 3]
+[1, 1, 3, 3, 1, 3, 3, 3] [3, 3, 1, 1, 3, 3, 3, 1] ) / 2
+17
+
+===== PAGE 18 =====
+
+QuIP#
+C.2. Example Decoding with E8P
+Here, we give an example of decoding with E8P. In this example, the first 8 bits of the codeword encode the entry in S,
+the next 7 bits encode the 7 right sign flips, and the last bit encodes whether or not we shift by 1
+4. Let the codeword be
+0001010110010111. The first 8 bits 00010101 = 21 would indicate that we start with the 21st entry in S. In this
+example, let that be the vector
+s =
+1
+2 , 1
+2 , 1
+2 , 3
+2 , 1
+2 , 1
+2 , 1
+2 , 1
+2
+
+,
+which is not in ˆD8. Thus, s requires an odd number of sign flips to get into ˆD8. Then, the next 7 bits 1001011 would
+indicate that we need to negate the 1st, 2nd, 4th, and 7th from right bits. Since we need an odd number of sign flips, the 8th
+from right bit is also a sign flip. The sign-decoded vector is then
+
+−1
+2 , −1
+2 , 1
+2 , 3
+2 , −1
+2 , 1
+2 , −1
+2 , −1
+2
+
+,
+which we can verify is in E8. Finally, the last bit 1 indicates that we need to add 1
+4, so the final decoded vector is
+
+−1
+4 , −3
+4 , 3
+4 , 7
+4 , −1
+4 , 3
+4 , −1
+4 , −1
+4
+
+,
+which is in E8 + 1
+4 as desired.
+For posterity, we include a copy of our CUDA kernel for matrix-vector multiplication with E8P. This kernel was designed for
+NVIDIA Ampere and newer GPUs. The same kernel can be found at https://github.com/Cornell-RelaxML/
+quip-sharp/blob/main/quiptools/quiptools_e8p_gemv.cu.
+__global__ static void
+decode_matvec_e8p_kernel(
+float *__restrict__ output,
+const uint2 *__restrict__ input,
+const uint2 *__restrict__ weights_compressed,
+const uint32_t *__restrict__ codebook_abs,
+int N,
+int K
+) {
+int warpId = threadIdx.y;
+int laneId = threadIdx.x;
+for (int iin = blockIdx.x; iin < (N >> 4); iin += gridDim.x) {
+float z0 = 0.0;
+float z1 = 0.0;
+float z2 = 0.0;
+float z3 = 0.0;
+for (int iik = warpId; iik < (K >> 6); iik += 32) {
+uint2 w_compr = weights_compressed[laneId + 32 *iik + (K >> 1) *iin];
+uint32_t a = w_compr.x;
+uint32_t b = w_compr.y;
+uint32_t s = b;
+s = s ˆ (s >> 4);
+s = s ˆ (s >> 8);
+s = s ˆ (s >> 16);
+uint32_t sb = (s & 15);
+s = b ˆ sb;
+sb = sb | (sb << 16);
+uint32_t input_to_warp = (( const uint32_t*)(&input[16*iik]))[laneId];
+uint32_t shifted_laneId = (laneId & 3) << 3;
+18
+
+===== PAGE 19 =====
+
+QuIP#
+// BLOCK 01
+{
+uint32_t x = codebook_abs[(a >> 0) & 255];
+x = x ˆ ((s & 0x11111111) * 14);
+uint32_t o = BASE_OFFSET | ((sb & 0x00010001) << 4);
+uint32_t w00 = add_as_half2(mask_lop3(x << 4, XMASK, WMASK), o);
+uint32_t w01 = add_as_half2(mask_lop3(x << 0, XMASK, WMASK), o);
+uint32_t w02 = add_as_half2(mask_lop3(x >> 4, XMASK, WMASK), o);
+uint32_t w03 = add_as_half2(mask_lop3(x >> 8, XMASK, WMASK), o);
+x = codebook_abs[(a >> 8) & 255];
+x = x ˆ ((s & 0x22222222) * 7);
+o = BASE_OFFSET | ((sb & 0x00020002) << 3);
+uint32_t w10 = add_as_half2(mask_lop3(x << 4, XMASK, WMASK), o);
+uint32_t w11 = add_as_half2(mask_lop3(x << 0, XMASK, WMASK), o);
+uint32_t w12 = add_as_half2(mask_lop3(x >> 4, XMASK, WMASK), o);
+uint32_t w13 = add_as_half2(mask_lop3(x >> 8, XMASK, WMASK), o);
+uint32_t x_in0 = __shfl_sync(FULL_MASK, input_to_warp, shifted_laneId | 0);
+uint32_t x_in1 = __shfl_sync(FULL_MASK, input_to_warp, shifted_laneId | 1);
+asm(
+"mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32"
+" { %0, %1, %2, %3 },"
+" { %4, %5, %6, %7 },"
+" { %8, %9 },"
+" { %0, %1, %2, %3 };"
+: "+f"(z0), "+f"(z1), "+f"(z2), "+f"(z3)
+: "r"(w00), "r"(w10), "r"(w01), "r"(w11),
+"r"(x_in0), "r"(x_in1)
+);
+x_in0 = __shfl_sync(FULL_MASK, input_to_warp, shifted_laneId | 2);
+x_in1 = __shfl_sync(FULL_MASK, input_to_warp, shifted_laneId | 3);
+asm(
+"mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32"
+" { %0, %1, %2, %3 },"
+" { %4, %5, %6, %7 },"
+" { %8, %9 },"
+" { %0, %1, %2, %3 };"
+: "+f"(z0), "+f"(z1), "+f"(z2), "+f"(z3)
+: "r"(w02), "r"(w12), "r"(w03), "r"(w13),
+"r"(x_in0), "r"(x_in1)
+);
+}
+// BLOCK 23
+{
+uint32_t x = codebook_abs[(a >> 16) & 255];
+s = s >> 2;
+x = x ˆ ((s & 0x11111111) * 14);
+uint32_t o = BASE_OFFSET | ((sb & 0x00040004) << 2);
+uint32_t w00 = add_as_half2(mask_lop3(x << 4, XMASK, WMASK), o);
+uint32_t w01 = add_as_half2(mask_lop3(x << 0, XMASK, WMASK), o);
+uint32_t w02 = add_as_half2(mask_lop3(x >> 4, XMASK, WMASK), o);
+uint32_t w03 = add_as_half2(mask_lop3(x >> 8, XMASK, WMASK), o);
+x = codebook_abs[(a >> 24) & 255];
+19
+
+===== PAGE 20 =====
+
+QuIP#
+x = x ˆ ((s & 0x22222222) * 7);
+o = BASE_OFFSET | ((sb & 0x00080008) << 1);
+uint32_t w10 = add_as_half2(mask_lop3(x << 4, XMASK, WMASK), o);
+uint32_t w11 = add_as_half2(mask_lop3(x << 0, XMASK, WMASK), o);
+uint32_t w12 = add_as_half2(mask_lop3(x >> 4, XMASK, WMASK), o);
+uint32_t w13 = add_as_half2(mask_lop3(x >> 8, XMASK, WMASK), o);
+uint32_t x_in0 = __shfl_sync(FULL_MASK, input_to_warp, shifted_laneId | 4);
+uint32_t x_in1 = __shfl_sync(FULL_MASK, input_to_warp, shifted_laneId | 5);
+asm(
+"mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32"
+" { %0, %1, %2, %3 },"
+" { %4, %5, %6, %7 },"
+" { %8, %9 },"
+" { %0, %1, %2, %3 };"
+: "+f"(z0), "+f"(z1), "+f"(z2), "+f"(z3)
+: "r"(w00), "r"(w10), "r"(w01), "r"(w11),
+"r"(x_in0), "r"(x_in1)
+);
+x_in0 = __shfl_sync(FULL_MASK, input_to_warp, shifted_laneId | 6);
+x_in1 = __shfl_sync(FULL_MASK, input_to_warp, shifted_laneId | 7);
+asm(
+"mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32"
+" { %0, %1, %2, %3 },"
+" { %4, %5, %6, %7 },"
+" { %8, %9 },"
+" { %0, %1, %2, %3 };"
+: "+f"(z0), "+f"(z1), "+f"(z2), "+f"(z3)
+: "r"(w02), "r"(w12), "r"(w03), "r"(w13),
+"r"(x_in0), "r"(x_in1)
+);
+}
+}
+if ((laneId & 1) == 0) {
+atomicAdd(output + (iin << 4) + (laneId >> 1), (laneId & 2) ? z2 : z0);
+}
+}
+}
+C.3. Why not K-Means?
+A significant motivating factor behind E8P is that post-incoherence processing, entries of W are approximately Gaussian
+distributed. However, E8P is uniformly distributed, which raises the question: why not use a K-means based codebook? K-
+means based codebooks offer strong theoretical performance but have a few issues. First, it is difficult to enforce symmetry
+in a “learned” K-means codebook. This is crucial to be able to have a compressible codebook. If we force sign symmetry
+by learning cluster centers on only the positive orthant of a n-dimensional Gaussian, we can get around this but sacrifice
+accuracy at the axis region. Second, using K-means requires storing a codebook in fp16, whereas the entries of E8P can be
+stored as 4 bit integers. This means that during inference, the source codebook for a 8 dimension K-means codebook will be
+4 times larger than the source codebook of E8P, running the risk of a cache eviction. Finally, we observe that empirically,
+E8P actually outperforms K-means, which is somewhat interesting and suggests that allocating more information to the
+edge of the distribution, even after incoherence processing, is useful.
+20
+
+===== PAGE 21 =====
+
+QuIP#
+C.4. E8P vs. Other Codebook Constructions
+Below, we compare the quality of quantized models from E8P vs. other codebooks. TheD4 lattice achieves the 4 dimensional
+kissing number but has lower dimensionality than E8, giving poorer shaping. An 8-dimensional K-Means codebook has
+similar shaping as E8P but worse packing density. Although RHT-transformed weights are approximately Gaussian and not
+Uniform, we find that a Uniform codebook (E8P) performs better than a Gaussian codebook (K-means)
+Table 7. E8P and E8-based codebooks outperform other codebooks based on lower-dimensional lattices or different distributions. Numbers
+without fine-tuning.
+MODEL CODEBOOK CODEBOOK DIM. B ITS WIKI 2 PPL ( CTX 4096) C4 PPL ( CTX 4096, C4˙NEW )
+2-70B FP16 1 16 3.120 5.533
+2-70B E8P 8 2 4.156 6.535
+2-70B E8 LATTICE 8 2.37 3.702 6.082
+2-70B D4 LATTICE 4 2 4.408 6.797
+2-70B D4 LATTICE 4 2.21 3.970 6.332
+2-70B K-M EANS 8 2 4.452 6.925
+D. Fine-Tuning During Quantization
+In Algorithm 5 we describe our fine tuning procedure for QuIP#.
+Algorithm 5 QuIP# with Fine-Tuning
+Require: Unquantized Model M, Development Set D, Quantization Order O,
+Ensure: Quantized Model M
+X ← Membedding(D)
+C ← M(D)logits
+for Decoder Block D ∈ M do
+Y ← D(X)
+Xtrain, Ytrain, Xvalid, Yvalid ← split(X, Y )
+for Linear Layer L ∈ D in order specified by O do
+ˆL ← QuIP#-NoFT(L)
+Disable gradients for the weight matrix (but not SU , SV ) of ˆL.
+Optimize D to minimize MSE(D(Xtrain), Ytrain) using Xvalid, Yvalid for early stopping.
+end for
+X ← Y
+end for
+{At this point, the learnable parameters in M are the layernorms, all SU and SV , and the language model head.}
+Dtrain, Ctrain, Dvalid, Cvalid ← split(D, C)
+Optimize M to minimize CrossEntropy(M(Dtrain), Ctrain) using Dvalid, Cvalid for early stopping.
+21
+
+===== PAGE 22 =====
+
+QuIP#
+Table 8. QuIP# outperforms OmniQuant even with grouping. More numbers can be found in the OmniQuant paper.
+MODEL METHOD EFFECTIVE BITS WIKI 2 PPL ( CTX 2048) C4 PPL ( CTX 2048)
+2-70B FP16 16 3.32 5.52
+2-70B Q UIP# 2 4.16 6.12
+2-70B O MNI Q W2A16 2 7.81 12.28
+2-70B O MNI Q W2A16 G64 2.25 6.11 7.88
+2-70B O MNI Q W3A16 3 3.92 6.06
+E. Additional Results
+E.1. QuIP# vs. OmniQuant with Grouping
+E.2. QuIP# on Mixtral 8x7B (Jiang et al., 2024) and Falcon 180B (Almazrouei et al., 2023)
+Table 9. 2 bit QuIP# without fine-tuning on Mixtral 8x7B, a mixture of experts (MoE), and Falcon 180B, a non-Llama-based model.
+QuIP# scales to different architectures without issue.
+MODEL BITS WIKI 2 C4 A RCC A RCE B OOL Q P IQA W INO
+MIXTRAL -8X7B 16 3.45 6.85 0.56 0.74 0.85 0.84 0.75
+MIXTRAL -8X7B 2 4.69 8.25 0.49 0.68 0.81 0.80 0.73
+FALCON -180B 16 3.30 6.31 0.61 0.82 0.87 0.85 0.81
+FALCON -180B 2 4.18 7.06 0.58 0.81 0.84 0.84 0.81
+22
+
+===== PAGE 23 =====
+
+QuIP#
+E.3. Zeroshot performance for ablation on lattice codebooks and fine-tuning
+Table 10. Ablation on lattice codebooks and fine-tuning. QuIP# no FT and E8 uses the RHT to perform incoherence processing but does
+not use lattice codebooks or fine-tuning. QuIP# No FT uses lattice codebooks but not fine-tuning. QuIP# uses lattice codebooks and
+performs fine-tuning.
+MODEL METHOD BITS ARCC
+(ACC NORM )
+ARCE
+(ACC NORM )
+BOOL Q
+(ACC)
+PIQA
+(ACC NORM )
+WINO
+(ACC)
+2-70 N ATIVE 16 48.0 59.7 76.6 80.9 76.8
+2-70 QUIP# NO FT & NO E8 4 49.4 60.1 77.6 80.7 76.1
+2-70 QUIP# N O FT 4 48.3 60.1 78.4 80.6 76.2
+2-70 QUIP# 4 48.3 59.4 77.4 80.7 77.1
+2-70 Q UIP# NO FT & NO E8 3 47.4 59.1 75.8 80.9 77.5
+2-70 Q UIP# N O FT 3 47.9 59.9 78.8 79.9 77.0
+2-70 Q UIP# 3 48.4 59.5 74.8 80.3 76.4
+2-70 QUIP# NO FT & NO E8 2 43.5 56.2 75.1 78.1 76.0
+2-70 QUIP# N O FT 2 47.2 59.5 79.1 78.6 74.2
+2-70 QUIP# 2 47.7 59.1 80.3 79.4 75.9
+2-13 N ATIVE 16 44.3 58.0 69.0 79.0 69.9
+2-13 QUIP# NO FT & NO E8 4 43.7 58.6 70.1 78.7 69.6
+2-13 QUIP# N O FT 4 42.9 56.4 67.8 78.9 69.9
+2-13 QUIP# 4 44.2 57.7 69.7 78.9 69.9
+2-13 Q UIP# NO FT & NO E8 3 42.1 55.2 70.0 77.8 69.5
+2-13 Q UIP# N O FT 3 41.9 57.7 73.3 78.1 68.0
+2-13 Q UIP# 3 43.3 57.7 69.8 78.4 69.1
+2-13 QUIP# NO FT & NO E8 2 36.3 50.8 67.4 73.4 63.1
+2-13 QUIP# N O FT 2 37.1 50.1 66.5 75.7 63.6
+2-13 QUIP# 2 41.3 55.1 68.3 77.4 67.7
+2-7 N ATIVE 16 40.6 53.5 71.0 76.9 67.0
+2-7 QUIP# NO FT & NO E8 4 39.5 51.9 71.3 76.6 67.3
+2-7 QUIP# N O FT 4 40.4 53.7 68.5 77.2 67.5
+2-7 QUIP# 4 40.1 53.4 69.9 76.5 67.6
+2-7 Q UIP# NO FT & NO E8 3 38.1 52.6 65.2 76.1 65.1
+2-7 Q UIP# N O FT 3 37.7 53.1 70.6 76.7 67.6
+2-7 Q UIP# 3 39.4 53.8 69.7 76.1 66.5
+2-7 QUIP# NO FT & NO E8 2 29.2 42.5 63.3 68.0 59.0
+2-7 QUIP# N O FT 2 32.5 42.8 62.3 71.2 62.4
+2-7 QUIP# 2 36.1 50.5 68.3 74.9 64.9
+23
+
+===== PAGE 24 =====
+
+QuIP#
+E.4. More Scaling Plots
+Model Size (Bits)
+Wikitext2 Perplexity
+3
+4
+5
+6
+5E+10 1E+11
+QuIP# 2 Bit
+QuIP# 3 Bit
+QuIP# 4 Bit
+AQLM ~2 Bit
+AQLM ~3 Bit
+AQLM ~4 Bit
+Wikitext2 Perplexity vs Total Model Size (Bits), LLama 2
+Model Size (Bits)
+C4 Perplexity
+5
+6
+7
+8
+5E+10 1E+11
+QuIP# 2 Bit
+QuIP# 3 Bit
+QuIP# 4 Bit
+C4 Perplexity vs Total Model Size (Bits), LLama 2
+Model Size (Bits)
+C4 Perplexity
+6
+7
+8
+9
+5E+10 1E+11
+QuIP# 2 Bit
+QuIP# 3 Bit
+QuIP# 4 Bit
+C4 Perplexity vs Total Model Size (Bits), LLama 1
+Figure 5. QuIP# scaling. (Top Left) Llama 2 Wikitext 2 perplexity vs AQLM. Context length 4096. QuIP# 2 and 3 bit scale better than
+AQLM 2 and 3 bit. (Top Right) Llama 2 C4 Perplexity. Context length 4096. (Bottom) Llama 1 C4 Perplexity. Context length 2048.
+F. Implementation Details
+This section contains implementation details for our Llama experiments. These details also mostly apply to the Mixtral and
+Falcon numbers except we use the Falcon dataset (Almazrouei et al., 2023) as it is publicly avaiable.
+F.1. Bit Accounting
+The additional overhead of QuIP# consists of 1KiB for E8P and 16n bits for each nD sign vector if using fine tuning or n
+without. The 1KiB from E8P is shared over all linear layers, so it adds ≪ 0.01 bits per weight. For a m × n matrix, the sign
+vectors take up 16(n+m)
+nm bits per weight with fine tuning or n+m
+nm without. For LLM-sized matrices (e.g. the smallest matrix
+in Llama 2 7B is 4096 × 4096), this is still < 0.01 additional bits per weight.
+F.2. Hessian Generation
+Hessian matrices H were generated with 6144 sequences of a model’s native context length (2048 for Llama 1, 4096 for
+Llama 2) from the RedPajama 1T (Computer, 2023) dataset.
+24
+
+===== PAGE 25 =====
+
+QuIP#
+F.3. Hadamard Matrices
+We use Hadamard matrices available at Neil Sloane’s website (Sloane).
+F.4. Perplexity and Zeroshot Evaluation
+We use the OPTQ (Frantar et al., 2023) “Wiktext2” and “C4” (not “C4 New”) sampling functions to calculate perplexity for
+our experiments. We use LM Eval (Gao et al., 2023) to calculate zeroshot numbers.
+F.5. Scales
+In order to achieve good coverage of the codebook, we scale W by ρ|W |F before quantizing W . For E8P, we used ρ = 0.9,
+for RVQ 3 bit we used ρ ≈= 0.98 for the first stage and ≈ 2.04 for the second stage, for RVQ 4 bit we used ρ ≈= 1.03
+for the first stage and ≈ 3.45 for the second stage. These numbers were determined by finding the ρ(s) that minimized the
+quantization error of quantizing a Gaussian to the codebook. The ≈ is because different models have slightly different
+optimal ρ since incoherence processing does not produce an exact Gaussian. The actual numbers for each model were found
+with a coarse scale sweep but are all close to these values.
+F.6. Fine Tuning
+For the within-transformer block section of fine-tuning, we use the Adam optimizer (Kingma & Ba, 2017), a learning rate of
+5 × 10−5, batch size of 8, and sequence length equal to the model’s native context length. We train on small development
+dataset of 256 sequences from RedPajama 1T and validate on 128 sequences. We train for 5 epochs (160 steps) and keep the
+best model parameters based on the validation set. For the end to end tuning, we use the Adam optimizer, a learning rate
+of 5 × 10−5, batch size of 1, sequence length equal to the model’s context length (except for 70B, where we had to use
+3072 to avoid an OOM on our not very well optimized training script), and the same dataset and epoch setup as before. We
+observe that outside of using a low enough learning rate, the other hyperparameters did not affect fine-tuning much. For
+the 2 bit models, we used a learning rate of 5 × 10−4 for SU and SV (5 × 10−5 for everything else as above) for both the
+within-block and end to end fine tuning stages.
+F.7. Hardware
+All experiments were run on NVIDIA A100 GPUs except for the timing numbers, which were measured on a NVIDIA RTX
+4090 to see what was possible with the current state-of-the-art NVIDIA consumer GPU. We find that we can quantize Llama
+2 70B without fine tuning in under 10 GPU-hours and with fine tuning in around 100 GPU-hours. Both numbers do not
+include Hessian generation, which can be done once for a model and reused across many different quantization experiments.
+F.8. Code and Prequantized Models
+Our code is available at https://github.com/Cornell-RelaxML/quip-sharp and prequantized QuIP# mod-
+els are available at https://huggingface.co/relaxml.
+G. Example Generation
+Below are some example generations from Llama 2 70B chat quantized with QuIP# to 2 bits, truncated to 256 tokens.
+25
+
+===== PAGE 26 =====
+
+QuIP#
+Prompt: How much wood could a woodchuck chuck if a woodchuck could chuck wood?
+QuIP#:
+The answer to this tongue-twister is a bit of a mystery. Woodchucks, also known as groundhogs, are rodents that
+burrow in the ground and are known for their ability to move large amounts of soil. However, there is no scientific
+evidence to suggest that they can actually chuck wood. The phrase “how much wood could a woodchuck chuck”
+was first used in a song called “The Woodchuck’s Song” in the late 19th century. The song was popularized by the
+singer and songwriter, Johnny Mercer, and it became a hit in the 1940s. The song’s lyrics include the line “How
+much wood could a woodchuck chuck if a woodchuck could chuck wood?” but they don’t provide an answer. In
+reality, woodchucks don’t chuck wood, they dig burrows. They are able to move a lot of soil and dirt as they dig
+their burrows, but they don’t have the ability to move wood. So, the answer to the tongue-
+Prompt: Write a song about large language models to the tune of Mariah Carey’s “All I Want For Christmas Is You”
+QuIP#:
+Verse 1:
+I don’t want a lot for Christmas
+There’s just one thing I’m wishing for
+A language model that’s large and bright
+To help me with my writing, day and night
+Chorus:
+All I want for Christmas is a language model
+A big, smart, AI that’s my ideal
+I’ll be happy with just a few billion parameters
+All I want for Christmas is a language model, yeah
+Verse 2:
+I’ll be good, I won’t be naughty
+I’ll use it for good, not foraughty
+I’ll generate text that’s nice and neat
+And make my writing life a treat
+Chorus:
+All I want for Christmas is a language model
+A big, smart, AI that’s my ideal
+I’ll be happy with just a few billion parameters
+All I want for Christmas is a language model, yeah
+Bridge:
+I’
+26
+
+===== PAGE 27 =====
+
+QuIP#
+Prompt: Write some CUDA code that does a matrix multiply
+QuIP#:
+Here is a simple example of a matrix multiply using CUDA:
+#include <cuda.h>
+#include <cuda_runtime.h>
+__global__ void matrixMultiply(float *A, float *B, float *C, int rowsA, int co
+lsA, int rowsB, int colsB) {
+int i = blockIdx.x * blockDim.x + threadIdx.x;
+int j = blockIdx.y * blockDim.y + threadIdx.y;
+if (i < rowsA && j < colsB) {
+float sum = 0;
+for (int k = 0; k < rowsB; k++) {
+sum += A[i + k * colsA] * B[k + j * rowsB];
+}
+C[i + j * rowsB] = sum;
+}
+}
+int main() {
+int rowsA = 3;
+int colsA = 3;
+int rowsB = 3;
+27

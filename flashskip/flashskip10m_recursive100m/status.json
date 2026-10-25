@@ -1,0 +1,49 @@
+{
+  "architecture": {
+    "attention_layers": [
+      0,
+      1,
+      3,
+      5,
+      7,
+      9
+    ],
+    "d_ff": 360,
+    "d_model": 160,
+    "effective_layers": 18,
+    "global_tokens_per_step": 32768,
+    "grad_accum": 4,
+    "kv_heads": 1,
+    "micro_batch": 16,
+    "query_heads": 5,
+    "recursion_steps": 2,
+    "recursion_strategy": "middle-cycle",
+    "sequence_length": 512,
+    "shared_middle_layers": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "unique_layers": 10,
+    "vocab_size": 49152
+  },
+  "colab_status": "[colab] No active sessions found on server.\n",
+  "data_integrity": "verified_same_stream_22m_prefix",
+  "last_error": null,
+  "latest_checkpoint": "checkpoint_step_003052_tokens_0100.01M",
+  "latest_step": 3052,
+  "latest_tokens": 100007936,
+  "model": "FlashSkip-10M-Recursive-MiddleCycle-Nr2",
+  "parameters": 9964832,
+  "phase": "completed",
+  "resumed_from": null,
+  "session": "flashskip10mrec100m",
+  "state": "completed",
+  "target_tokens": 100000000,
+  "updated_at": "2026-09-03T00:59:38+05:30"
+}

@@ -1,0 +1,9 @@
+{
+  "time": 1792521090.22079,
+  "failure": "Ambiguous model.py discovery selected prepared notebook code folder, which lacks telemetry.json; failed before loading training state or running optimizer steps.",
+  "fix": "Select exactly one complete source folder containing telemetry.json and all required source files; validate exact expected resume tokens.",
+  "checkpoint_tokens": 300023808,
+  "target": 400000000,
+  "tests": "Archived-code, missing-source, ambiguous-source fixtures passed; launcher and supervisor compile.",
+  "architecture_or_training_changes": false
+}

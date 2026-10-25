@@ -1,0 +1,11 @@
+{
+  "checkpoint": "/Users/hardikarora/Desktop/MAIN/research/mor10m/run/downloads/300000000/result/checkpoints/checkpoint_0300023808",
+  "trained_tokens": 300023808,
+  "prompt": "Plants need sunlight because",
+  "completion": " the soil is not the same as the soil.\nThe soil is a very important part of the soil. The soil is a very important part of the soil.\nThe soil is a very important part of the soil.\nThe soil",
+  "decoding": "greedy",
+  "device": "CPU float32",
+  "generated_tokens": 48,
+  "seconds": 0.23701400000572903,
+  "tokens_per_second": 202.51968237673623
+}

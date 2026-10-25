@@ -1,0 +1,1099 @@
+
+
+===== PAGE 1 =====
+
+LLM Pretraining with Continuous Concepts
+Jihoon Tack1,2,†, Jack Lanchantin1, Jane Yu1, Andrew Cohen1, Ilia Kulikov1, Janice Lan1, Shibo Hao1,3,†,
+Yuandong Tian1, Jason Weston1, Xian Li1
+1FAIR at Meta,2KAIST, 3UC San Diego
+†Work done during an internship at Meta
+Next token prediction has been the standard training objective used in large language model pretraining.
+Representations are learned as a result of optimizing for token-level perplexity. We propose Continuous
+Concept Mixing (CoCoMix), a novel pretraining framework that combines discrete next token
+prediction with continuous concepts. Specifically, CoCoMix predicts “continuous concepts” learned
+from a pretrained sparse autoencoder and mixes them into the model’s hidden state by interleaving
+with token hidden representations. Through experiments on multiple benchmarks, including language
+modeling and downstream reasoning tasks, we show that CoCoMix is more sample efficient and
+consistently outperforms standard next token prediction, knowledge distillation and inserting pause
+tokens. We find that combining both concept learning and interleaving in an end-to-end framework is
+critical to performance gains. Furthermore, CoCoMix enhances interpretability and steerability by
+allowing direct inspection and modification of the predicted concept, offering a transparent way to
+guide the model’s internal reasoning process.
+Date: February 13, 2025
+Correspondence: Jihoon Tack atjihoontack@kaist.ac.kr, Xian Li atxianl@meta.com
+Code: https://github.com/facebookresearch/RAM/tree/main/projects/cocomix
+1 Introduction
+Recent progress in large language models (LLMs) has revolutionized natural language processing (Brown et al.,
+2020; Dubey et al., 2024) and thus became a core technology in various real-world applications, such as coding
+assistants (Roziere et al., 2023), search engines (Xuan-Quy et al., 2023), and personal AI assistants (Gao
+et al., 2023). Central to these breakthroughs is the simple paradigm of next token prediction, which leverages
+massive amounts of unlabeled text to uncover rich linguistic patterns (Radford et al., 2018, 2019). However,
+natural language tokens are often superficial (e.g., function words like “the” or “a”), necessitating substantial
+training for models to acquire high-level reasoning and conceptual understanding while also hindering their
+ability to tackle long-horizon tasks such as planning (LeCun, 2022; Bachmann and Nagarajan, 2024).
+To tackle this issue, recent studies have investigated methods that go beyond token-level signals by leveraging
+richer information to train models. For instance, some approaches target more expressive prediction objectives,
+such as predicting multiple tokens at once to better capture semantic relationships (Gloeckle et al., 2024;
+DeepSeek-AI, 2024), while others augment the input with rich signals, e.g., self-generated thought tokens
+(Zelikman et al., 2024), or fixed pause tokens (Goyal et al., 2024) prior to next token prediction. Moreover,
+emerging evidence suggests that LLMs inherently encode high-level concepts and reasoning processes in
+their latent representations (Deng et al., 2023; Yang et al., 2024), indicating replacing discrete language
+tokens with continuous latent representations has promise in improving reasoning efficiency (Hao et al., 2024).
+While token-level modeling remains important for coherent text generation, the key challenge is to enrich
+or supplement these natural language tokens so that LLMs can learn more abstract reasoning abilities and
+long-range dependencies.
+This raises a key question: can we augment the next token prediction objective to explicitly model concepts
+in a latent representation space, thereby bridging semantic abstraction and fine-grained token-level guidance?
+To this end, we draw inspiration from recent findings thatSparse Autoencoders (SAEs)can effectively isolate
+meaningful latent features in LLMs by capturing the high-level semantic concepts (Cunningham et al., 2023;
+1
+arXiv:2502.08524v1  [cs.LG]  12 Feb 2025
+
+===== PAGE 2 =====
+
+A
+f con
+h con
+BC
+BCD
+É˝ʾƪǗ˝kʀȣ ǗʏʀǗǳʵ˝ˍ Ȟʾʏɹ ƪ ʵʾǳ˝ʾƪkʀǳǡ SAE ɹʏǡǳɧ噾ˍ ȵkǡǡǳʀ ˍ˝ƪ˝ǳ
+∇concept −log p(‘D’ |‘ABC’)
+SǳɧǳǗ˝ǳǡCʏʀǗǳʵ˝ˍ
+喐 GʾƪǡɄǳʀ˝ Ȟɧʏ̷
+A
+f
+h
+BC
+BCD
+Lǳƪʾʀkʀȣ ˝ʏ ʵʾǳǡkǗ˝ ǗʏʀǗǳʵ˝ˍ 塻Mḱkʀȣ喯Iʀ˝ǳʾɧǳƪ̲kʀȣ Ǘʏʀ˝kʀ˲ʏ˲ˍ ǗʏʀǗǳʵ˝ˍ kʀ˝ʏ˝ȵǳȵkǡǡǳʀˍ˝ƪ˝ǳ
+Uˍkʀȣ ƪ˝˝ʾkǎ˲˝kʏʀ ˝ʏ ˍǳɧǳǗ˝ ǗʏʀǗǳʵ˝ˍˆc
+z
+噻Cʏʀ˝kʀ˲ʏ˲ˍ ǗʏʀǗǳʵ˝噼
+PʾǳǡkǗ˝ǳǡ ǗʏʀǗǳʵ˝ˍI
+min CE( , )
+Figure 1 Overview of CoCoMix. We use an SAE to extract concepts from a pretrained model’s hidden statehcon and then
+select important concepts based on the attribution score (i.e., measuring the influence on the output). These selected
+concepts are used as labelsI for concept prediction by minimizing the cross-entropy lossCE(·, ·). The predicted
+concepts z are then compressed into a compact vector, forming a continuous conceptc, which is mixed into the model’s
+hidden state by interleaving with token hidden representations. We demonstrate that CoCoMix is more sample efficient
+and outperforms standard next-token prediction and knowledge distillation baselines.
+Bricken et al., 2023). As SAEs are trained to reconstruct the model’s hidden state with sparsity constraints,
+it encourages focusing on a compact set of concept dimensions (Templeton et al., 2024). This makes it
+possible to highlight the pretrained model’s concepts—the core semantic directions that underpin model
+prediction—while avoiding unnecessary features.
+We propose Continuous Concept Mixing (CoCoMix), a novel and effective language modeling framework using
+continuous concepts. Specifically, we extract semantic concepts using a pretrained SAE and select the most
+influential ones based on attribution scores, which quantify each concept’s influence on the model’s output.
+The model is then trained to predict these selected concepts from its hidden state using a cross-entropy
+loss. Once multiple concepts are predicted, we compress them into a singlecontinuous conceptand mix (or
+insert) into the hidden states by interleaving with token embeddings, thereby directly contributing to the
+next token prediction. An additional benefit is that one can probe or analyze the predicted concepts, enabling
+controllable generation and improving model interpretability. An overview of CoCoMix is shown in Figure 1.
+We demonstrate the efficacy of CoCoMix through extensive evaluations across multiple language modeling
+benchmarks and pretraining model sizes, ranging from million-scale to billion-scale parameter sizes. For
+instance, when applied to a 1.38B-sized model, CoCoMix achieves comparable performance with the next token
+prediction with 21.5% fewer training tokens. Moreover, CoCoMix demonstrates substantial improvements in
+weak-to-strong supervision scenarios, where concepts extracted from a small model can even be used as ground
+truth labels to supervise the training of a larger model. Finally, we show that the insertion of compressed
+concept vectors enables us to steer and control the model by probing the predicted concept during generation.
+2 CoCoMix: Continuous Concept Mixing
+In this section, we present Continuous Concept Mixing (CoCoMix), a framework that extends next-token
+prediction with continuous concepts. We first review our problem setup of interest and the concept extraction
+process using a sparse autoencoder (SAE) in Section 2.1. Then, we describe the concept selection framework
+and explain how the model predicts and interleaves these concepts into its hidden state to improve language
+modeling in Section 2.2.
+2
+
+===== PAGE 3 =====
+
+2.1 Prelim: Problem Setup and Sparse Autoencoder
+Problem setup. We consider a language-modeling task over a vocabularyV, with a training corpusD ⊆ V ∗,
+where each sequencex = (x1, x2, . . .) ∈ D is drawn i.i.d. from the data distribution. We require a pretrained
+language model for concept extractionMcon = fcon ◦ hcon which predicts next token probabilityMcon(xt | x<t).
+Here, we extract the continuous conceptsc from the hidden statehcon, where hcon outputs the hidden state at
+a chosen layer of depthLcon, and fcon maps that representation to the next token distribution. We aim to
+train M to model the same autoregressive factorizationM(x) = Q|x|
+t=1 M(xt | x<t, c<t), but by augmenting
+with continuous conceptsc.
+Sparse Autoencoder. We first propose to extract high-level concepts from a pretrained model’s hidden state. We
+use an SAE, which maps the input to a high-dimensional sparse activation, with the objective of reconstructing
+the original input (Lee et al., 2006). When applied to an LLM, the SAE decomposes the hidden state into
+multiple dimensions, each of which can be viewed as a distinct concept capturing semantically meaningful
+features (Yun et al., 2021; Bricken et al., 2023). We consider the TopK SAE (Makhzani and Frey, 2014),
+which uses a TopK activation to enforce sparsity.
+Formally, for a given input sequencex and corresponding pretrained model’s hidden state at positiont,
+denoted as hcon
+t = hcon(x)t ∈ Rdcon, SAE consists of a linear encoderE : Rdcon → RC and a linear decoder
+D : RC → Rdcon, where C is the dimension of the concept space. The reconstruction process of SAE is as:
+cpre
+t = E
+ 
+hcon
+t
+
+, ct = TopK
+ 
+cpre
+t
+
+, bhcon
+t = D
+ 
+ct
+
+,
+where cpre
+t ∈ RC is the pre-activation concept vector,TopK(·) zeros out all but the largestKSAE entries, and
+bhcon
+t is the reconstruction. The SAE is trained by minimizing the reconstruction loss:∥hcon
+t −bhcon
+t ∥2
+2. By
+enforcing TopK sparsity, the SAE isolates the most critical dimensions inc that explain the pretrained model’s
+features. Here, each activated element ofct is interpreted as a concept.
+2.2 Continuous Concept Mixing
+Now, we describe the core training pipeline of CoCoMix, which consists of a concept selection framework
+(refer to the left figure in Figure 1) and two training steps to learn and utilize continuous concepts (refer to
+the right figure in Figure 1). First, we select important concepts using the attribution score, which measures
+the influence of each concept on the output. Then, we propose predicting the selected concepts from the
+model’s hidden state using cross-entropy loss, allowing the model to implicitly learn which concepts should be
+encoded as a hidden representation. Finally, we utilize the predicted concepts to create a “continuous concept”,
+which is interleaved in the hidden states, enabling the model to explicitly learn to use both the continuous
+concepts as well as the token hidden states. Intuitively, the model selectively learns which concepts are useful
+for the next token prediction and how it shouldmix them with the token representations.
+Target concept selection using attribution. While the extracted conceptct represents the core features of the
+current input context, it may not directly indicate which concepts matter most for predicting the ground
+truth next tokenxt+1 (Templeton et al., 2024). To this end, we propose utilizingattribution, a method to
+measure the causal influence of each concept on the output (Baehrens et al., 2010; Sundararajan et al., 2017).
+Specifically, the attribution score measures the influence based on the local linear approximation of the effect
+of changing the concept value. In this paper, we use a simple attribution score that measures the influence by
+multiplying the loss gradient with a given input (Simonyan and Zisserman, 2014; Shrikumar et al., 2016).
+Concretely, for a given inputx and corresponding conceptct, we define the attribution scoreat ∈ RC as:
+at = cpre
+t ⊙ ∇ ct − log fcon
+ 
+xt+1|D(ct), h<t
+
+, (1)
+where ⊙ denotes element-wise multiplication. Note that we multiplied the pre-activationcpre
+t (instead of ct)
+to capture non-activated concepts made by the TopK sparse activation. Based on the computed attribution
+score, we select salient concepts and incorporate them into language modeling.
+Predicting the selected concepts. For a given attribution scoreat, we first select the indices of the concept that
+have a high score and use these as discrete labels for concept prediction. LetI = {i1, . . . , iKattr } be the set of
+indices corresponding to the topKattr values of at, and ht = h(x)t ∈ Rd be the model’s hidden state of the
+3
+
+===== PAGE 4 =====
+
+given input x at the same token position. Then, we learn to predict these labels using a linear prediction head
+M that outputs logitzt = M (ht) ∈ RC by minimizing the following cross-entropy lossCE(·, ·) is as follows:
+Lconcept(at) = 1
+Kattr
+X
+i∈I
+CE
+ 
+zt, i
+
+. (2)
+Mixing continuous concepts with token embeddings. To encourage the model to internalize the concept more
+effectively, we propose “mixing” (i.e., interleaving) the predicted concept with the existing token hidden
+representations. As our model predicts multiple concepts at once, we propose to compress them into a compact
+vector through a learnable mapping, which we refer to as a continuous concept. This compressed vector is
+interleaved with token vectors.
+Formally, for a given concept prediction logitzt, we sparsify the logit usingTopK activation to predict the
+concepts, then compress them into a continuous concept vectorˆct ∈ Rd:
+ˆct = W TopK(zt) + b, (3)
+where W ∈ Rd×C and b ∈ Rd project the TopK-sparse vector to ad-dimensional embedding. We then append
+ˆct to the model’s hidden sequenceˆct as (h1, ˆc1, . . . ,ht, ˆct), which is fed into the remaining transformer blocks
+f. Note that this design not only improves the model’s performance but also offers interpretability and
+controllability through analyzing and steering the predicted conceptzt, which can be probed or tuned during
+the model’s generation process. Furthermore, by analyzing the weights of the compression layerW, one can
+identify which concept is useful for the next token prediction.
+This approach shares similarities with intervention techniques in the mechanistic interpretability literature,
+which modify the hidden state by adding a concept vector to the original hidden state (Zou et al., 2023; Wu
+et al., 2024). However, unlike intervention methods that directly manipulate the hidden state, our approach
+treats the predicted concept as a separate unit of information by interleaving it in the hidden state. This
+design allows the model to process the concept independently, leveraging the pretrained model’s internal
+reasoning reflected in the prediction.
+Training objective. The final training objective for CoCoMix combines the standard next token prediction loss
+and the concept prediction term as follows:
+T −1X
+t=1
+− log f
+ 
+xt+1 | h≤t, ˆc≤t
+
++ λLconcept(at), (4)
+where λ is a tunable coefficient.
+3 Experiments
+We provide an empirical evaluation of CoCoMix by investigating the following questions:
+• Can CoCoMix improve the performance of next token prediction in LLM pretraining? (Figure 2 and
+Figure 3)
+• Does CoCoMix show improvement in weak-to-strong supervision setup compared to other knowledge
+distillation methods? (Table 1 and Figure 4)
+• Does CoCoMix introduce model interpretability and steerability? (Figure 5)
+• How does each proposed component of CoCoMix contribute to the performance? (Figure 6)
+Before answering each question, we outline the experimental protocol (more details in Appendix A).
+Training setup. We use a pretrained open-source SAE that is trained on the 124M-sized GPT-2 (Gao et al.,
+2024). We consider training CoCoMix with three different numbers of active parameters, including, 68M,
+386M, and 1.38B, with a context length of 1024. For the analysis and ablation study, we mainly conducted
+experiments on the 68M model. Note that this activated parameter count includes those in the new layer
+4
+
+===== PAGE 5 =====
+
+21.5% less tokens
+NTP
+CoCoMix (ours)
+Validation Perplexity
+11
+12
+13
+14
+15
+Training tokens (B)
+0 50 100 150 200
+(a) Validation perplexity
+NTP
+CoCoMix (ours)
+Average Perplexity
+12
+14
+16
+18
+20
+Training tokens (B)
+0 50 100 150 200 (b) Average downstream task perplexity
+NTP
+CoCoMix (ours)
+Accuracy (%)
+50
+52
+54
+56
+Training tokens (B)
+0 50 100 150 200(c) Average downstream task accuracy
+Figure 2 CoCoMix vs. NTP performance at different training checkpoints. Each model contains a total of 1.38B parameters.
+Each model is trained on the OpenWebText dataset. For CoCoMix, the concepts are extracted from a 124M-sized model
+(10× smaller than the base model). The plots show improvements in: (a) validation perplexity, (b) average perplexity
+on LAMBADA, WikiText-103, and (c) average accuracy on HellaSwag, PIQA, SIQA, Arc-Easy, and WinoGrande.
+-0.3
+-0.2
+-0.7 NTP
+CoCoMix (ours)
+Perplexity
+10
+15
+20
+25
+69M 386M 1.38B
+(a) OpenWebText, PPL (↓)
+-1.5 -1.0
+-1.5
+Perplexity
+0
+20
+40
+60
+69M 386M 1.38B (b) LAMBADA, PPL (↓)
+-1.1
+-0.2
+-1.4
+Perplexity
+10
+30
+50
+69M 386M 1.38B (c) WikiText-103, PPL (↓)
++1.2
++1.2
++0.3
+Accuracy (%)30
+40
+50
+69M 386M 1.38B (d) HellaSwag, Acc-n (↑)
++0.3
++0.1
++0.1
+Accuracy (%)
+60
+65
+70
+69M 386M 1.38B
+(e) PIQA, Acc (↑)
+-0.5
++0.7
++0.1
+Accuracy (%)
+36
+38
+40
+69M
+37
+386M
+39.87
+1.38B
+40.59 (f) SIQA, Acc (↑)
++2.4
++1.5
++0.4
+Accuracy (%)
+40
+50
+60
+69M 386M 1.38B (g) Arc-Easy, Acc (↑)
++0.3
++2.8
++5.7
+Accuracy (%)
+50
+55
+60
+69M 386M 1.38B (h) WinoGrande, Acc (↑)
+Figure 3 CoCoMix vs. NTP performance at different model sizes. We consider various model sizes, including 69M, 386M,
+and 1.38B parameters and train on 200B OpenWebText tokens. We evaluate the models on OpenWebText validation
+perplexity and downstream datasets LAMBADA, WikiText-103, HellaSwag, PIQA, SIQA, Arc-Easy, and WinoGrande.
+(i.e., the concept predictor), whereas for other baselines, we match the same number of active parameters by
+increasing the hidden state dimension sized. CoCoMix utilizes fewer FLOPs than Pause token (as discussed
+in Section 3.3) but more FLOPs than NTP, due to the interleaving of continuous concepts. We use the
+OpenWebText dataset (Radford et al., 2019) as the pretraining corpus to use the same distribution used to
+train Mcon. All experiments are conducted with 20B training tokens, except for the main experiment in
+Section 3.1, which uses 200B tokens.
+Baselines. We consider the standard pretraining next token prediction (NTP) procedure, and the commonly
+used distillation method, knowledge distillation (KD; Hinton et al., 2015), which is widely used in pretraining
+(Gu et al., 2024; Sanh et al., 2019; Team, 2024). We excluded KD baselines that require multiple models (i.e.,
+more than a single teacher model) to be trained (Gu et al., 2024). For KD, we minimize the KL divergence
+between teacher and student output while balancing the KL term with the NTP loss. Note that generating
+synthetic datasets for distillation (Kim and Rush, 2016; Yu et al., 2024) is excluded due to inefficiency, as it
+requires generating more than 20B tokens.
+Evaluation setup. For evaluation, we consider the validation perplexity of the pretraining dataset and
+7 downstream tasks to benchmark commonsense reasoning and reading comprehension. This includes
+LAMBADA (Paperno et al., 2016), WikiText-103 (Merity et al., 2017), HellaSwag (Zellers et al., 2019), PIQA
+5
+
+===== PAGE 6 =====
+
+NTP
+KD
+CoCoMix (ours)
+Average Perplexity
+20
+25
+30
+35
+40
+Training tokens (B)
+0 5 10 15 20
+(a) Weak-to-strong: Avg. Perplexity
+NTP
+KD
+CoCoMix (ours)
+Average Accuracy (%)
+44
+45
+46
+47
+48
+Training tokens (B)
+0 5 10 15 20 (b) Weak-to-strong: Avg. Accuracy
+NTP
+KD
+CoCoMix (ours)
+Validation Perplexity14
+16
+18
+Training tokens (B)
+0 5 10 15 20 (c) Distribution shift (OpenWebMath)
+Figure 4 CoCoMix vs. Knowledge Distillation (KD). For our weak-to-strong supervision setup, we train a 386M model
+where the teacher of KD (or concept extraction for CoCoMix) is a 124M-sized model: we report (a) average perplexity
+over OpenWebText, LAMABADA, and WikiText and (b) average accuracy over HellaSwag, PIQA, SIQA, Arc-Easy,
+and WiniGrande dataset. For (c) a distribution shift setup, we train all methods on OpenWebMath, a math specific
+pretraining corpus.
+Method Total
+Params
+OWT LAMB Wiki HellaS PIQA SIQA Arc-E WinoG Avg Avg
+PPL (↓) PPL (↓) PPL (↓) Acc-n (↑) Acc (↑) Acc (↑) Acc (↑) Acc (↑) PPL (↓) Acc (↑)
+NTP 69M 25.3 107.6 52.3 27.4 59.4 36.6 39.7 50.7 61.8 42.7
+KD 69M 25.2 099.3 51.0 27.4 59.8 36.2 39.8 50.7 58.5 42.8
+CoCoMix 69M 24.7 099.1 50.9 27.6 59.5 37.2 39.3 51.0 58.2 42.9
+NTP 386M 16.3 26.3 29.9 33.6 64.1 38.4 47.3 50.9 24.2 46.8
+KD 386M 16.4 24.6 29.1 33.6 63.6 38.0 48.5 51.4 23.4 47.0
+CoCoMix 386M 15.9 19.3 29.1 34.7 63.6 39.2 47.9 52.3 21.4 47.5
+NTP 1.38B 14.3 16.6 25.0 38.1 66.1 38.9 50.5 50.0 18.6 48.7
+KD 1.38B 14.2 16.6 24.9 37.4 66.7 39.0 50.1 52.3 18.5 49.1
+CoCoMix 1.38B 13.9 15.4 24.9 38.4 66.9 39.5 50.8 53.0 18.1 49.7
+Table 1 CoCoMix vs. Next Token Prediction (NTP) vs. Knowledge Distillation (KD).We report performance on the OpenWebText
+(OWT) training set, as well as downstream tasks, including LAMBADA (LAMB), WikiText-103 (Wiki), HellaSwag
+(HellaS), PIQA, Social Interaction QA (SIQA), Arc-Easy (Arc-E), and WinoGrande (WinoG). We train three different
+sizes of models where 124M model is used as a teacher. All models are trained on 20B tokens sampled from the
+OpenWebText dataset. The bold indicates the best result.
+(Bisk et al., 2020), Social IQA (SIQA; Sap et al., 2019), ARC-easy (Clark et al., 2018), and WinoGrande
+(Sakaguchi et al., 2020) datasets. We also consider OpenWebMath (Paster et al., 2023) as a pretraining dataset
+to demonstrate that concepts learned from a pretrained LLM can still be applied to CoCoMix, even when the
+model was trained on a different corpus.
+3.1 Main Results
+In this section, we illustrate two core results: i) the comparison with NTP on a relatively large-scale pretraining
+setup and ii) the comparison with KD baseline, especially on weak-to-strong supervision scenarios where
+concepts extracted from a small model are used to guide a larger model.
+Improving NTP with CoCoMix at scale. We first present the main result by applying CoCoMix to the NTP.
+Here, we consider training NTP and CoCoMix on 200B tokens. As shown in Figure 3, CoCoMix consistently
+and significantly improves the performance of overall downstream tasks on various model sizes. Our results
+also indicate that larger models (e.g., 386M and 1.38B) can benefit from using concepts extracted from a
+smaller 124M model, showing effective weak-to-strong supervision. Moreover, as shown in Figure 2, CoCoMix
+consistently improves the performance over the NTP on a billion-scale model. For instance, CoCoMix achieves
+similar performance to NTP while using 21.5% fewer tokens, demonstrating high sample efficiency. Finally, it is
+worth noting that the performance gain of using CoCoMix is increasing over the training steps, demonstrating
+strong generalization performance.
+6
+
+===== PAGE 7 =====
+
+Iʀʵ˲˝ Pʾʏɹʵ˝喐 The best platform for buying tickets is the 
+Gǳʀǳʾƪ˝Ʉʏʀ喐vernacular ticketing system,” said the official. “The ticket prices are fixed and the tickets are available at the same time.“
+Nʏ S˝ǳǳʾCʏCʏMɄ́嘗ʏ˲ʾˍ嘘GPT味 SAE
+S˝ǳǳʾ ǗʏʀǗǳʵ˝ 味呴呹呵呴喐 ˍɄ˝ǳ ƪǡǡʾǳˍˍ ʾǳɧƪ˝ǳǡ S˝ǳǳʾ ǗʏʀǗǳʵ˝ 呲呶呷呹呸喐 ̈́ǳƪʾ喯ɹʏʀ˝ȵ ʾǳɧƪ˝ǳǡ
+Gǳʀǳʾƪ˝Ʉʏʀ喐iphoneapp.
+Gǳʀǳʾƪ˝Ʉʏʀ喐vernacular website, Ticketmaster.com. The site is a great resource for finding the best deals on tickets.
+Gǳʀǳʾƪ˝Ʉʏʀ喐urchin-cheers.com. The online store has a new, fast-growing selection of premium tickets
+Gǳʀǳʾƪ˝Ʉʏʀ喐—by the end of the year —and the new platform by fans. The new ticket-by a group of fans has been known as the “ticket by ‘ticket —the group Gǳʀǳʾƪ˝Ʉʏʀ喐Facebook page. It's a place where you can buy tickets for free and then go to the next one. The other option is to buy a ticket for a month or two
+Figure 5 Qualitative demonstration of the concept steering effect. CoCoMix and GPT2 models are 350M and 124M
+parameter transformers, respectively, trained on the OpenWebText dataset. For CoCoMix, we manipulate the predicted
+concept logit z, while for GPT2, we adjust the SAE concept spacec by increasing the activation of a specific concept
+index. This illustrates the impact of targeted concept steering on the respective model outputs.
+Comparison with KD baseline. We also compare CoCoMix with KD baseline across multiple scenarios, including
+(1) a stronger teacher model teaching a smaller student model; (2) weak-to-strong supervision, where a
+weaker teacher teaches a larger student model; and (3) distribution shift, where the student is trained on a
+corpus different from the teacher’s pretraining distribution. As shown in Table 1, CoCoMix demonstrates
+improvements over KD in all considered model configurations. In particular, CoCoMix shows significant
+performance gain in the weak-to-strong supervision setup, e.g., improving average perplexity of 2.8 in 386M,
+while KD does not show great improvement. This arises because a weaker teacher can introduce noisy or
+suboptimal knowledge, especially when the student surpasses the teacher in capability (Rawat et al., 2024).
+This trend is also observable in Figure 4, where models trained with KD fall behind standard training midway
+through training as the student outpaces the teacher (especially in the distribution shift scenario). In contrast,
+CoCoMix selectively utilizes useful concepts, resulting in a consistent performance gain.
+3.2 Interpretability and Steerability of CoCoMix
+Another core advantage of CoCoMix is its interpretability and model steering. Specifically, as the model is
+trained to predict concepts in its hidden state, we can analyze which concepts it focuses on based on the
+concept predictions. Furthermore, by amplifying the magnitude of the predicted conceptzt, one can control
+the output generation of the model. Following Templeton et al. (2024), we multiplyzt of a desired concept
+element by constants ranging from -10 to 10. To verify whether this steerability works as intended, we steer
+the activation of the same concept in the pretrained model’s SAE latent spacec and confirm whether the
+output exhibits the corresponding concept. Here, we use a 386M parameter model trained with CoCoMix,
+where the pretrained model is GPT-2. As shown in Figure 5, when the concept related to “website address”
+is amplified, both models start generating actual website addresses. This demonstrates that our model has
+successfully learned the GPT-2 aligned concepts. More examples of steering can be found in Appendix B.2.
+3.3 Analysis of CoCoMix’s effectiveness
+In this section, we provide a detailed analysis of CoCoMix to validate the effect of each proposed component.
+Unless otherwise specified, we use a 69M model and train on 20B tokens sampled from the OpenWebText
+dataset across all methods throughout this section.
+Effectiveness of the attribution score. We first analyze whether the attribution score effectively extracts
+important concepts. To demonstrate this, we train CoCoMix using the activation valuect for concept
+extraction, i.e., Lconcept(ct) in Equation 2, instead of the attribution scoreat. Remark that the activation
+value also well reflects the importance of the concept (Bricken et al., 2023). As shown in Figure 6a, using
+attribution scores significantly improves performance, improving sample efficiency by 17.5% compared to
+activation value based selection. We believe it will be an interesting future direction to explore other selection
+criteria for improving CoCoMix’s performance or removing undesirable concepts to reduce bias, e.g., selectively
+removing unsafe concepts for safe LLM pretraining.
+7
+
+===== PAGE 8 =====
+
+Activation
+Attribution (Act * Grad)
+17.5% less tokens
+Validation Perplexity25
+26
+27
+28
+29
+Training tokens (B)
+5 10 15 20
+(a) Effectiveness of the attribution score
+Direct hidden pred: Ɏ1
+Direct hidden pred: Ɏ2
+Direct hidden pred: cos
+Concept pred (ours)
+Validation Perplexity
+24
+28
+32
+36
+40
+Training tokens (B)
+0 5 10 15 20(b) Concept vs. direct hidden state
+Frequency
+0
+500
+1000
+1500
+2000
+Weight norm
+0 0.5 1.0 1.5 2.0 (c) Compression layer’s weight analysis
+NTP (53M)
+i) Concept pred (53M)
+ii) Concept mix (69M)
+i + ii) CoCoMix (69M)
+Validation Perplexity
+24
+28
+32
+36
+Training tokens (B)
+0 5 10 15 20
+(d) Component analysis
+Adding
+Mixing (interleaving)
+Validation Perplexity
+24
+28
+32
+36
+Training tokens (B)
+0 5 10 15 20 (e) Design choice for concept condition
+NTP + Pause
+KD + Pause
+CoCoMix (ours)
+Validation Perplexity
+24
+28
+32
+Training tokens (B)
+0 5 10 15 20 (f) Comparison with Pause Token
+Figure 6 Analysis of CoCoMix: (a) Effectiveness of the attribution score for selecting concepts. (b) Comparison between
+concept prediction and direct hidden state prediction (i.e., predicting the hidden state with continuous loss rather
+than discretizing the hidden state with SAE). (c) The sparsity in the compression weight. (d) Component analysis by
+analyzing the contribution of concept prediction and mixing. (e) Design choices for concept conditioning by comparing
+adding the concept vector to the original hidden state and mixing (interleaving the concept vector with token hidden
+representation). (f) Comparison between CoCoMix and the Pause token (i.e., adding learnable tokens). We use a 69M
+transformer and train on 20B tokens from the OpenWebText dataset.
+Comparison with direct hidden state predictions. To evaluate the importance of predicting the concept extracted
+from SAE, we compare CoCoMix with direct hidden state prediction strategies (i.e., predict the full hidden
+state without projecting into the concept space). To have a comparison under the same architecture as
+CoCoMix, we replace the concept prediction headM with a two-layer multilayer perceptron (MLP), denoted
+g(·), which predicts the pretrained LLM’s hidden statehcon directly from the hidden state of the model
+h. The predicted representation, g(h), is then compressed into a continuous embedding for insertion to
+have the same architecture as CoCoMix. Here, we use continuous loss including,ℓ1, ℓ2, and the cosine
+distance (e.g., |hcon − g(h)|2
+2 for ℓ2) to predict the hidden state. As shown in Figure 6b, direct hidden state
+prediction leads to a performance drop. We conjecture this to be due to SAE’s ability to decompose the
+latent into semantically meaningful concepts while predicting all hidden states may include noisy components,
+emphasizing the effectiveness of our method.
+Compression layer weight analysis. Now, we analyze the weight of the compression layerW in Equation 3 to
+show how CoCoMix utilize the predicted concept. To this end, we visualize theℓ2 norm of each concept’s
+weights of 386M CoCoMix: for the weight matrixW ∈ Rd×C, where d is the hidden dimension andC is
+the number of concepts, the norm is defined as:∥W:,c∥2 =
+qPD
+d=1 W 2
+d,c. As shown in Figure 6c, we found
+that a portion of concept weights are near zero, e.g., 5.8% has a norm less than1e-2. This indicates that
+CoCoMix learns to ignore these concepts when compressing them into a continuous concept if it is not useful.
+We conjecture such a process enabled CoCoMix for strong weak-to-strong supervision as it learned to ignore
+ineffective concepts extracted from a weak model.
+Component Analysis. We analyze the contributions of each component of our method: (a) concept prediction
+Equation 2, and (b) concept insertion Equation 4. The results in Figure 6d demonstrate that both components
+are critical for performance improvement. Specifically, applying the concept prediction loss alone yields a
+8
+
+===== PAGE 9 =====
+
+modest reduction in perplexity. However, incorporating concept insertion alongside prediction enhances the
+effectiveness of the loss, resulting in further performance gains. This highlights the role of insertion in enabling
+the model to leverage the pretrained LLM’s latent reasoning effectively. Notably, while concept insertion
+increases parameter count, it has a limited impact on performance when used alone, emphasizing the critical
+role of concept prediction.
+Continuous concept mixing method. We explored two methods for introducing the continuous conceptˆct into
+the model’s hidden stateht, referred to as concept conditioning. The first method, insertion, insert the
+continuous concept in front of the token embedding, thus enabling the model to have a mixed input of the
+token and concept. The other option is intervention, which directly modifies the hidden state by adding the
+concept vector, i.e.,ht ← ht + ˆct. As illustrated in Figure 6e, both methods enhance pretraining performance
+(compared to NTP in Figure 6d), highlighting the importance of concept conditioning, where the insertion
+method performed better. By introducing a distinct concept vector, the insertion method enables the model
+to explicitly recognize and effectively utilize concepts during generation, enhancing its overall performance.
+CoCoMix vs. pause tokens. Furthermore, we consider an additional baseline that jointly uses pause token
+(Goyal et al., 2024). Specifically, the pause token uses an additional learnable token that is inserted into the
+token embedding, enabling the LLM to think more before predicting the next token, which is similar to our
+continuous concept insertion. To this end, we insert the pause token for every input token on the same hidden
+state layer as CoCoMix to ensure comparable computation. Moreover, we also consider training the pause
+token with KD. As shown in Figure 6f, CoCoMix consistently outperforms the pause token, indicating our
+inserted (or interleaved) continuous concept indeed consists of useful information to improve the performance.
+4 Related Work
+Beyond token-level guidance for language modeling. While next token prediction remains the standard paradigm
+for language modeling, recent approaches have begun to explore methods that provide guidance beyond
+language tokens. For instance, some methods explore a better target, such as leveraging multi-token
+predictions to capture long context dependencies (Gloeckle et al., 2024; DeepSeek-AI, 2024) or predicting
+sequence embedding (Lee et al., 2024). Additionally, methods explore new types of inputs, e.g., using latents
+(Hao et al., 2024) or self-generated thought as inputs (Zelikman et al., 2024), which have shown improving
+reasoning capabilities. Only recently, concept-level modeling using local encoder-decoder architectures has
+also been explored to represent a language at a higher abstraction level (LCM et al., 2024). Other methods
+add extra tokens in the input space to increase computation at inference time Nye et al. (2021); Wei et al.
+(2022); Goyal et al. (2024); Lanchantin et al. (2024). In contrast to other works, we propose a pretraining
+approach that integrates next token prediction with continuous concepts, connecting high level concepts with
+fine-grained token guidance.
+Sparse Autoencoders (SAEs). SAEs extend the autoencoder by enforcing sparsity constraints in the latent
+space (Lee et al., 2006). The features learned by SAEs are often interpretable and disentangled, making them
+useful across various domains, including language modeling (Bricken et al., 2023). Additionally, SAEs have
+gained attention in mechanistic interpretability due to their ability to capture coherent semantic concepts
+(Marks et al., 2024). This property has enabled practical advancements in identifying and manipulating
+semantic concepts and facilitating steering for controlled model outputs (Lieberum et al., 2024). Among SAE
+variants, TopK SAEs (Makhzani and Frey, 2014) enforce explicit sparsity using a TopK activation function,
+demonstrating effectiveness even for large models (Gao et al., 2024). In this work, we leverage SAE and, to
+the best of our knowledge, are the first to apply it to LLM pretraining, achieving strong performance while
+enhancing the interpretability and controllability of the trained model.
+Knowledge distillation (KD). Our method can also be related to KD, i.e., transfers the expertise of a teacher
+model to a student model to enhance performance (Hinton et al., 2015; Zagoruyko and Komodakis, 2017),
+as CoCoMix extracts high-level semantic features from a pretrained model which is used to train a base
+model. Recently, KD for LLMs has garnered increasing attention, leveraging knowledge from a teacher to
+improve the generative and encoding capabilities of a student (Sanh et al., 2019; Ko et al., 2024). Especially,
+applying KD to LLM pretraining remains challenging due to the massive token scales (billions to trillions),
+forcing most current methods to resort to naive token-level probability matching (Team, 2024; Gu et al., 2024).
+9
+
+===== PAGE 10 =====
+
+Additionally, while pretrained models contain a vast amount of learned information and are thus beneficial to
+use, reusing knowledge from smaller teacher models remains challenging (Burns et al., 2023). In this work, we
+show CoCoMix can even leverage the concept extracted from small models to train a large model showing
+weak-to-strong supervision.
+5 Conclusion
+We propose Continuous Concept Mixing (CoCoMix), a new LLM pretraining framework that augments next
+token prediction with continuous concepts. By leveraging concepts extracted from a pretrained SAE as
+targets, our model predicts both the next token and the associated concept. Predicted concepts are then
+compressed into a continuous concept vector, which is then mixed into the hidden state. This approach
+enhances interpretability and controllability by enabling direct probing of the distilled concepts. Experimental
+results show that CoCoMix consistently improves performance across benchmarks, particularly in challenging
+generalization scenarios such as weak-to-strong supervision. Future work could explore learning continuous
+concepts during pretraining without the need for distillation.
+10
+
+===== PAGE 11 =====
+
+References
+Gregor Bachmann and Vaishnavh Nagarajan. The pitfalls of next-token prediction. InInternational Conference on
+Machine Learning, 2024.
+David Baehrens, Timon Schroeter, Stefan Harmeling, Motoaki Kawanabe, Katja Hansen, and Klaus-Robert Müller.
+How to explain individual classification decisions.The Journal of Machine Learning Research, 2010.
+Yonatan Bisk, Rowan Zellers, Jianfeng Gao, Yejin Choi, et al. Piqa: Reasoning about physical commonsense in natural
+language. In AAAI Conference on Artificial Intelligence, 2020.
+Trenton Bricken, Adly Templeton, Joshua Batson, Brian Chen, Adam Jermyn, Tom Conerly, Nick Turner, Cem Anil,
+Carson Denison, Amanda Askell, Robert Lasenby, Yifan Wu, Shauna Kravec, Nicholas Schiefer, Tim Maxwell,
+Nicholas Joseph, Zac Hatfield-Dodds, Alex Tamkin, Karina Nguyen, Brayden McLean, Josiah E Burke, Tristan Hume,
+Shan Carter, Tom Henighan, and Christopher Olah. Towards monosemanticity: Decomposing language models
+with dictionary learning.Transformer Circuits Thread, 2023. https://transformer-circuits.pub/2023/monosemantic-
+features/index.html.
+Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan,
+Pranav Shyam, Girish Sastry, Amanda Askell, et al. Language models are few-shot learners. InAdvances in Neural
+Information Processing Systems, 2020.
+Collin Burns, Pavel Izmailov, Jan Hendrik Kirchner, Bowen Baker, Leo Gao, Leopold Aschenbrenner, Yining Chen,
+Adrien Ecoffet, Manas Joglekar, Jan Leike, et al. Weak-to-strong generalization: Eliciting strong capabilities with
+weak supervision. arXiv preprint arXiv:2312.09390, 2023.
+Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot, Ashish Sabharwal, Carissa Schoenick, and Oyvind Tafjord.
+Think you have solved question answering? try arc, the ai2 reasoning challenge.arXiv preprint arXiv:1803.05457,
+2018.
+Hoagy Cunningham, Aidan Ewart, Logan Riggs, Robert Huben, and Lee Sharkey. Sparse autoencoders find highly
+interpretable features in language models.arXiv preprint arXiv:2309.08600, 2023.
+DeepSeek-AI. Deepseek-v3 technical report.arXiv preprint arXiv:2412.19437, 2024.
+Yuntian Deng, Kiran Prasad, Roland Fernandez, Paul Smolensky, Vishrav Chaudhary, and Stuart Shieber. Implicit
+chain of thought reasoning via knowledge distillation.arXiv preprint arXiv:2311.01460, 2023.
+Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil
+Mathur, Alan Schelten, Amy Yang, Angela Fan, et al. The llama 3 herd of models.arXiv preprint arXiv:2407.21783,
+2024.
+Difei Gao, Lei Ji, Luowei Zhou, Kevin Qinghong Lin, Joya Chen, Zihan Fan, and Mike Zheng Shou. Assistgpt: A
+general multi-modal assistant that can plan, execute, inspect, and learn.arXiv preprint arXiv:2306.08640, 2023.
+Leo Gao, Tom Dupré la Tour, Henk Tillman, Gabriel Goh, Rajan Troll, Alec Radford, Ilya Sutskever, Jan Leike, and
+Jeffrey Wu. Scaling and evaluating sparse autoencoders.arXiv preprint arXiv:2406.04093, 2024.
+Fabian Gloeckle, Badr Youbi Idrissi, Baptiste Rozière, David Lopez-Paz, and Gabriel Synnaeve. Better & faster large
+language models via multi-token prediction. InInternational Conference on Machine Learning, 2024.
+Sachin Goyal, Ziwei Ji, Ankit Singh Rawat, Aditya Krishna Menon, Sanjiv Kumar, and Vaishnavh Nagarajan.
+Think before you speak: Training language models with pause tokens. InInternational Conference on Learning
+Representations, 2024.
+Yuxian Gu, Hao Zhou, Fandong Meng, Jie Zhou, and Minlie Huang. Miniplm: Knowledge distillation for pre-training
+language models. arXiv preprint arXiv:2410.17215, 2024.
+Shibo Hao, Sainbayar Sukhbaatar, DiJia Su, Xian Li, Zhiting Hu, Jason Weston, and Yuandong Tian. Training large
+language models to reason in a continuous latent space.arXiv preprint arXiv:2412.06769, 2024.
+Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. Distilling the knowledge in a neural network. arXiv preprint
+arXiv:1503.02531, 2015.
+Yoon Kim and Alexander M Rush. Sequence-level knowledge distillation. InAnnual Conference of the Association for
+Computational Linguistics, 2016.
+11
+
+===== PAGE 12 =====
+
+Jongwoo Ko, Sungnyun Kim, Tianyi Chen, and Se-Young Yun. Distillm: Towards streamlined distillation for large
+language models. InInternational Conference on Machine Learning, 2024.
+Jack Lanchantin, Shubham Toshniwal, Jason Weston, Sainbayar Sukhbaatar, et al. Learning to reason and memorize
+with self-notes. Advances in Neural Information Processing Systems, 36, 2024.
+LCM, Loïc Barrault, Paul-Ambroise Duquenne, Maha Elbayad, Artyom Kozhevnikov, Belen Alastruey, Pierre Andrews,
+Mariano Coria, Guillaume Couairon, Marta R Costa-jussà, et al. Large concept models: Language modeling in a
+sentence representation space.arXiv preprint arXiv:2412.08821, 2024.
+Yann LeCun. A path towards autonomous machine intelligence.Open Review, 2022.
+Honglak Lee, Alexis Battle, Rajat Raina, and Andrew Ng. Efficient sparse coding algorithms. InAdvances in Neural
+Information Processing Systems, 2006.
+Hyunji Lee, Doyoung Kim, Jihoon Jun, Sejune Joo, Joel Jang, Kyoung-Woon On, and Minjoon Seo. Semiparametric
+token-sequence co-supervision. InAnnual Conference of the Association for Computational Linguistics, 2024.
+Tom Lieberum, Senthooran Rajamanoharan, Arthur Conmy, Lewis Smith, Nicolas Sonnerat, Vikrant Varma, János
+Kramár, Anca Dragan, Rohin Shah, and Neel Nanda. Gemma scope: Open sparse autoencoders everywhere all at
+once on gemma 2.arXiv preprint arXiv:2408.05147, 2024.
+I Loshchilov. Decoupled weight decay regularization.arXiv preprint arXiv:1711.05101, 2017.
+Alireza Makhzani and Brendan Frey. K-sparse autoencoders. InInternational Conference on Learning Representations,
+2014.
+Samuel Marks, Can Rager, Eric J Michaud, Yonatan Belinkov, David Bau, and Aaron Mueller. Sparse feature circuits:
+Discovering and editing interpretable causal graphs in language models.arXiv preprint arXiv:2403.19647, 2024.
+Stephen Merity, Caiming Xiong, James Bradbury, and Richard Socher. Pointer sentinel mixture models. InInternational
+Conference on Learning Representations, 2017.
+Maxwell Nye, Anders Johan Andreassen, Guy Gur-Ari, Henryk Michalewski, Jacob Austin, David Bieber, David
+Dohan, Aitor Lewkowycz, Maarten Bosma, David Luan, et al. Show your work: Scratchpads for intermediate
+computation with language models.arXiv preprint arXiv:2112.00114, 2021.
+Denis Paperno, Germán Kruszewski, Angeliki Lazaridou, Quan Ngoc Pham, Raffaella Bernardi, Sandro Pezzelle,
+Marco Baroni, Gemma Boleda, and Raquel Fernández. The lambada dataset: Word prediction requiring a broad
+discourse context. InAnnual Conference of the Association for Computational Linguistics, 2016.
+Keiran Paster, Marco Dos Santos, Zhangir Azerbayev, and Jimmy Ba. Openwebmath: An open dataset of high-quality
+mathematical web text.arXiv preprint arXiv:2310.06786, 2023.
+Alec Radford, Karthik Narasimhan, Tim Salimans, and Ilya Sutskever. Improving language understanding by generative
+pre-training. 2018.
+Alec Radford, Jeff Wu, Rewon Child, David Luan, Dario Amodei, and Ilya Sutskever. Language models are unsupervised
+multitask learners. 2019.
+Ankit Singh Rawat, Veeranjaneyulu Sadhanala, Afshin Rostamizadeh, Ayan Chakrabarti, Wittawat Jitkrittum,
+Vladimir Feinberg, Seungyeon Kim, Hrayr Harutyunyan, Nikunj Saunshi, Zachary Nado, et al. A little help goes a
+long way: Efficient llm training by leveraging small lms.arXiv preprint arXiv:2410.18779, 2024.
+Baptiste Roziere, Jonas Gehring, Fabian Gloeckle, Sten Sootla, Itai Gat, Xiaoqing Ellen Tan, Yossi Adi, Jingyu Liu,
+Romain Sauvestre, Tal Remez, et al. Code llama: Open foundation models for code.arXiv preprint arXiv:2308.12950,
+2023.
+Keisuke Sakaguchi, Ronan Le Bras, Chandra Bhagavatula, and Yejin Choi. Winogrande: An adversarial winograd
+schema challenge at scale. InAAAI Conference on Artificial Intelligence, 2020.
+Victor Sanh, Lysandre Debut, Julien Chaumond, and Thomas Wolf. Distilbert, a distilled version of bert: smaller,
+faster, cheaper and lighter. InAdvances in Neural Information Processing Systems, 2019.
+Maarten Sap, Hannah Rashkin, Derek Chen, Ronan Le Bras, and Yejin Choi. Social IQa: Commonsense reasoning
+about social interactions. InConference on Empirical Methods in Natural Language Processing, 2019.
+Avanti Shrikumar, Peyton Greenside, Anna Shcherbina, and Anshul Kundaje. Not just a black box: Learning important
+features through propagating activation differences. InInternational Conference on Machine Learning, 2016.
+12
+
+===== PAGE 13 =====
+
+Karen Simonyan and Andrew Zisserman. Very deep convolutional networks for large-scale image recognition.arXiv
+preprint arXiv:1409.1556, 2014.
+Mukund Sundararajan, Ankur Taly, and Qiqi Yan. Axiomatic attribution for deep networks. In International
+Conference on Machine Learning, 2017.
+Gemma Team. Gemma 2: Improving open language models at a practical size.arXiv preprint arXiv:2408.00118, 2024.
+Adly Templeton, Tom Conerly, Jonathan Marcus, Jack Lindsey, Trenton Bricken, Brian Chen, Adam Pearce, Craig
+Citro, Emmanuel Ameisen, Andy Jones, Hoagy Cunningham, Nicholas L Turner, Callum McDougall, Monte
+MacDiarmid, C. Daniel Freeman, Theodore R. Sumers, Edward Rees, Joshua Batson, Adam Jermyn, Shan Carter,
+Chris Olah, and Tom Henighan. Scaling monosemanticity: Extracting interpretable features from claude 3 sonnet.
+Transformer Circuits Thread, 2024. https://transformer-circuits.pub/2024/scaling-monosemanticity/index.html.
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Fei Xia, Ed Chi, Quoc V Le, Denny Zhou, et al.
+Chain-of-thought prompting elicits reasoning in large language models.Advances in neural information processing
+systems, 35:24824–24837, 2022.
+Zhengxuan Wu, Aryaman Arora, Zheng Wang, Atticus Geiger, Dan Jurafsky, Christopher D Manning, and Christopher
+Potts. Reft: Representation finetuning for language models. InAdvances in Neural Information Processing Systems,
+2024.
+Dao Xuan-Quy, Le Ngoc-Bich, Phan Xuan-Dung, Ngo Bac-Bien, and Vo The-Duy. Evaluation of chatgpt and microsoft
+bing ai chat performances on physics exams of vietnamese national high school graduation examination.arXiv
+preprint arXiv:2306.04538, 2023.
+Sohee Yang, Elena Gribovskaya, Nora Kassner, Mor Geva, and Sebastian Riedel. Do large language models latently
+perform multi-hop reasoning? InAnnual Conference of the Association for Computational Linguistics, 2024.
+Ping Yu, Jing Xu, Jason Weston, and Ilia Kulikov. Distilling system 2 into system 1.arXiv preprint arXiv:2407.06023,
+2024.
+Zeyu Yun, Yubei Chen, Bruno A Olshausen, and Yann LeCun. Transformer visualization via dictionary learning:
+contextualized embedding as a linear superposition of transformer factors.arXiv preprint arXiv:2103.15949, 2021.
+Sergey Zagoruyko and Nikos Komodakis. Paying more attention to attention: Improving the performance of
+convolutional neural networks via attention transfer. InInternational Conference on Learning Representations, 2017.
+Eric Zelikman, Georges Harik, Yijia Shao, Varuna Jayasiri, Nick Haber, and Noah D Goodman. Quiet-star: Language
+models can teach themselves to think before speaking. InConference on Language Modeling, 2024.
+Rowan Zellers, Ari Holtzman, Yonatan Bisk, Ali Farhadi, and Yejin Choi. Hellaswag: Can a machine really finish your
+sentence? In Annual Conference of the Association for Computational Linguistics, 2019.
+Andy Zou, Long Phan, Sarah Chen, James Campbell, Phillip Guo, Richard Ren, Alexander Pan, Xuwang Yin, Mantas
+Mazeika, Ann-Kathrin Dombrowski, et al. Representation engineering: A top-down approach to ai transparency.
+arXiv preprint arXiv:2310.01405, 2023.
+13
+
+===== PAGE 14 =====
+
+Appendix
+A Experimental Details
+Architecture details. Our method and baseline both utilize the GPT-2-based Transformer architecture and
+tokenizer (Radford et al., 2019), with a context length of 1024. We consider three model sizes, defined by
+the number of activated parameters: 69M, 386M, and 1.38B. For CoCoMix, the hidden state dimensionsd
+are 512, 1024, and 2028, with 8, 24, and 24 layers, respectively. The number of attention heads is set to 8,
+16, and 16 for the three configurations. Baseline models are configured to match the number of activated
+parameters by employing the same number of layers and attention heads, with hidden state dimensions of
+624, 1072, and 2096, respectively. We leverage an open-source pretrained TopK Sparse Autoencoder (SAE)
+(Gao et al., 2024) for concept extraction, whereKconcept is set to 32 and the concept activation size is 32,768.
+Consequently, our models introduce an additional(C + Kconcept) × d activated parameters on top of the base
+Transformer parameters. The GPT-2 model (a teacher model for KD and a concept extraction model for
+CoCoMix) has 12 layers, a hidden dimension size of 768, and 124M parameters. The concept extraction layer
+Lcon is configured as the 6th middle layer of GPT-2 for all model sizes. For CoCoMix, the concept prediction
+is done at the 4th layer for the 69M model and the 6th layer for the larger 386M and 1.38B models.
+Training details. We mainly followed the training details outlined in (Brown et al., 2020). For the main
+results presented in Section 2, models were trained on 200B tokens over approximately 382K training steps,
+while other experiments were conducted on 20B tokens. We used OpenWebText as the training dataset
+to match the same training corpus as GPT-2. The learning rate schedule included a warm-up phase over
+the first 1/300 of the total training steps, followed by a cosine decay to 10% of the maximum learning rate
+at the end of training. The maximum learning rates were set to6e-4, 3e-4, and 2e-4 for the 69M, 386M,
+and 1.38B models, respectively. The batch sizes were configured to 0.5M, 0.5M, and 1M tokens for the
+three model sizes. A weight decay of 0.1 was applied across all configurations, and we utilized the AdamW
+optimizer (Loshchilov, 2017) withβ1 = 0 .9 and β2 = 0 .95. For training CoCoMix, the concept prediction
+loss Equation 4 was scaled by a hyperparameterλ = 0.1, and Kattri was set to 4. For the KD baseline, we
+employed the vanilla KD loss, where the output probabilities of the teacher modelMcon and the student
+model M were matched using the Kullback-Leibler (KL) divergence. Specifically, given an inputx, the KD
+loss is defined as− log M(xt+1|x) +λKD · KL(Mcon(·|x)∥M(·|x)), where λKD = 0.1 consistently demonstrated
+strong performance.
+B Additional Results
+B.1 Detailed Performance During Training
+In this section, we present the performance tracking during training on 200B tokens, including validation
+perplexity and the perplexity and accuracy of various downstream tasks, including LAMBADA, WikiText-103,
+HellaSwag, PIQA, SIQA, Arc-Easy, and WinoGrande datasets. As shown in Figure 7, Figure 8, and Figure 9,
+we compare CoCoMix with the next token prediction (NTP) across different active parameter sizes: 69M,
+386M, and 1.38B. In most of the graphs, CoCoMix consistently demonstrates performance gains. Notably,
+our results show that CoCoMix achieves stable improvements in perplexity across all tasks. Furthermore,
+CoCoMix exhibits sample efficiency; for instance, in the 1.38B model, CoCoMix reaches the same OpenWebText
+validation perplexity as NTP while requiring approximately 43B fewer tokens (a 21.5% improvement in token
+efficiency).
+B.2 Additional Steerability Results
+To further analyze the steerability enabled by CoCoMix, we conducted experiments using both the same
+prompt as in the main figure and a new prompt (in Figure 10). For consistency, we first applied steering
+on additional concepts identified during our analysis—“$ dollar” and “Phone”—using the same prompt as in
+Figure 5. These experiments confirmed that the model could effectively modulate its output based on these
+newly identified concepts, producing coherent and concept-aligned generations. Next, to verify whether the
+14
+
+===== PAGE 15 =====
+
+NTP
+CoCoMix (ours)
+Validation Perplexity
+22
+24
+26
+28
+Training tokens (B)
+0 50 100 150 200
+(a) OpenWebText, PPL (↓)
+Perplexity
+60
+80
+100
+120
+Training tokens (B)
+0 50 100 150 200 (b) LAMBADA, PPL (↓)
+Perplexity
+45
+50
+55
+60
+Training tokens (B)
+0 50 100 150 200 (c) WikiText-103, PPL (↓)
+Accuracy norm (%)
+27.0
+27.5
+28.0
+28.5
+29.0
+Training tokens (B)
+0 50 100 150 200 (d) HellaSwag, Acc-n (↑)
+Accuracy (%)59
+60
+61
+Training tokens (B)
+0 50 100 150 200
+(e) PIQA, Acc (↑)
+Accuracy (%)
+35
+36
+37
+Training tokens (B)
+0 50 100 150 200 (f) SIQA, Acc (↑)
+Accuracy (%)
+38
+40
+42
+Training tokens (B)
+0 50 100 150 200 (g) Arc-Easy, Acc (↑)
+Accuracy (%)
+50
+52
+54
+56
+Training tokens (B)
+0 50 100 150 200 (h) WinoGrande, Acc (↑)
+Figure 7 CoCoMix vs. NTP performance at different training checkpoints on 69M parameter model. Each model is trained
+on the 200B tokens sampled from the OpenWebText dataset. The plot shows the result of (a) OpenWebText, (b)
+LAMBADA, (c) WikiText-103, (d) HellaSwag, (e) PIQA, (f) SIQA, (g) Arc-Easy, and (h) WinoGrande datasets. We
+use the concepts extracted from a 124M-sized model for training CoCoMix.
+identified concepts generalize to different contexts, we experimented with a new prompt:“Latent concept
+modeling is a”and steered the model using the previously identified concepts “month/year” and “Phone.” The
+results showed that the model successfully reproduced outputs aligned with these concepts, further supporting
+the robustness of our method. Additionally, we explored whether new concepts could be identified and steered
+using the same prompt. In this case, we identified two new concepts: “politics/law” and “aggressive tone.”
+Steering the model with these new concepts demonstrated that the outputs could be effectively controlled to
+exhibit characteristics aligned with the corresponding concepts. These findings further highlight the flexibility
+and interpretability of our approach.
+15
+
+===== PAGE 16 =====
+
+NTP
+CoCoMix (ours)
+Validation Perplexity14
+16
+18
+Training tokens (B)
+0 50 100 150 200
+(a) OpenWebText, PPL (↓)
+Perplexity
+10
+20
+30
+40
+Training tokens (B)
+0 50 100 150 200 (b) LAMBADA, PPL (↓)
+Perplexity
+25
+30
+35
+Training tokens (B)
+0 50 100 150 200 (c) WikiText-103, PPL (↓)
+Accuracy norm (%)
+34
+36
+38
+40
+42
+Training tokens (B)
+0 50 100 150 200 (d) HellaSwag, Acc-n (↑)
+Accuracy (%)
+62
+64
+66
+Training tokens (B)
+0 50 100 150 200
+(e) PIQA, Acc (↑)
+Accuracy (%)
+37
+38
+39
+40
+41
+Training tokens (B)
+0 50 100 150 200 (f) SIQA, Acc (↑)
+Accuracy (%)
+44
+46
+48
+50
+52
+54
+Training tokens (B)
+0 50 100 150 200 (g) Arc-Easy, Acc (↑)
+Accuracy (%)
+48
+50
+52
+54
+56
+58
+Training tokens (B)
+0 50 100 150 200 (h) WinoGrande, Acc (↑)
+Figure 8 CoCoMix vs. NTP performance at different training checkpoints on 368M parameter model. Each model is trained
+on the 200B tokens sampled from the OpenWebText dataset. The plot shows the result of (a) OpenWebText, (b)
+LAMBADA, (c) WikiText-103, (d) HellaSwag, (e) PIQA, (f) SIQA, (g) Arc-Easy, and (h) WinoGrande datasets. We
+use the concepts extracted from a 124M-sized model for training CoCoMix.
+NTP
+CoCoMix (ours)
+Validation Perplexity
+11
+12
+13
+14
+15
+Training tokens (B)
+0 50 100 150 200
+(a) OpenWebText, PPL (↓)
+Perplexity
+10
+15
+20
+Training tokens (B)
+0 50 100 150 200 (b) LAMBADA, PPL (↓)
+Perplexity
+18
+20
+22
+24
+26
+Training tokens (B)
+0 50 100 150 200 (c) WikiText-103, PPL (↓)
+Accuracy norm (%)
+40
+44
+48
+52
+Training tokens (B)
+0 50 100 150 200 (d) HellaSwag, Acc-n (↑)
+Accuracy (%)
+66
+68
+70
+72
+Training tokens (B)
+0 50 100 150 200
+(e) PIQA, Acc (↑)
+Accuracy (%)
+38
+40
+42
+Training tokens (B)
+0 50 100 150 200 (f) SIQA, Acc (↑)
+Accuracy (%)
+48
+52
+56
+60
+Training tokens (B)
+0 50 100 150 200 (g) Arc-Easy, Acc (↑)
+Accuracy (%)
+54
+56
+58
+60
+62
+Training tokens (B)
+0 50 100 150 200 (h) WinoGrande, Acc (↑)
+Figure 9 CoCoMix vs. NTP performance at different training checkpoints on 1.38B parameter model. Each model is trained
+on the 200B tokens sampled from the OpenWebText dataset. The plot shows the result of (a) OpenWebText, (b)
+LAMBADA, (c) WikiText-103, (d) HellaSwag, (e) PIQA, (f) SIQA, (g) Arc-Easy, and (h) WinoGrande datasets. We
+use the concepts extracted from a 124M-sized model for training CoCoMix.
+16
+
+===== PAGE 17 =====
+
+Iʀʵ˲˝ Pʾʏɹʵ˝喐 The best platform for buying tickets is the 
+Gǳʀǳʾƪ˝Ʉʏʀ喐vernacular ticketing system,” said the official. “The ticket prices are fixed and the tickets are available at the same time.“
+Nʏ S˝ǳǳʾCʏCʏMɄ́嘗ʏ˲ʾˍ嘘GPT味 SAE
+S˝ǳǳʾ ǗʏʀǗǳʵ˝ 呲味呸呹呴喐 妙 ǡʏɧɧƪʾ ʾǳɧƪ˝ǳǡ S˝ǳǳʾ ǗʏʀǗǳʵ˝ 呲呺呲呺呴喐 Pȵʏʀǳ ʾǳɧƪ˝ǳǡ
+Gǳʀǳʾƪ˝Ʉʏʀ喐iphoneapp.
+Gǳʀǳʾƪ˝Ʉʏʀ喐vernacular website, which is a great resource for finding out about the event. The event is free to attend, but you will need to pay for your ticket. The cost is $25forGeneration: $10.00price. The price is $10for a ticket. I bought a $5.50ticket for $1.The price of a good ticket is a lot more than a
+Gǳʀǳʾƪ˝Ʉʏʀ喐iphone.TheiPhoneis a great way to buy tickets to the game. It is easy to use, and it is very fast. You can buy a ticket to a game, pay forGǳʀǳʾƪ˝Ʉʏʀ喐iphone. The iPhoneis a great way to get around the iPhone. It's a good way for people to buy a smartphone. The iPhonehas a lot of features, but it's not
+(a) Main figure prompt, ‘$ dollar’ and ‘Phone’ concept
+Iʀʵ˲˝ Pʾʏɹʵ˝喐 Lƪ˝ǳʀ˝ ǗʏʀǗǳʵ˝ ɹʏǡǳɧɄʀȣ Ʉˍ ƪ
+Gǳʀǳʾƪ˝Ʉʏʀ喐technique that allows you to model a complex system in a way that is easy to understand and easy for the user to manipulate.
+Nʏ S˝ǳǳʾCʏCʏMɄ́嘗ʏ˲ʾˍ嘘GPT味 SAE
+S˝ǳǳʾ ǗʏʀǗǳʵ˝ 呲呶呷呹呸喐 ̈́ǳƪʾ喯ɹʏʀ˝ȵ ʾǳɧƪ˝ǳǡS˝ǳǳʾ ǗʏʀǗǳʵ˝ 呲呺呲呺呴喐 Pȵʏʀǳ ʾǳɧƪ˝ǳǡ
+Gǳʀǳʾƪ˝Ʉʏʀ喐very important part of the design process.Thefirst step is to create a model that is easy to use and easy for the user to understand.
+Gǳʀǳʾƪ˝Ʉʏʀ喐way to help the community by the end of the year.
+Generation: good idea. It's a way of doing a series of a monthand then you can go to the next level and you don't have to worry about the other thing. You can do a two-year-old
+Gǳʀǳʾƪ˝Ʉʏʀ喐powerful way to make the most of the data.Thedata is stored in a relational database, and the model is then used to create a model of a particular type of dataGǳʀǳʾƪ˝Ʉʏʀ喐great way to get started with your Android device. The first thing you need to do is install the Android SDK. The SDK is located in your computer.
+(b) New prompt, ‘year/month’ and ‘Phone’ concept
+Iʀʵ˲˝ Pʾʏɹʵ˝喐 Lƪ˝ǳʀ˝ ǗʏʀǗǳʵ˝ ɹʏǡǳɧɄʀȣ Ʉˍ ƪ
+Gǳʀǳʾƪ˝Ʉʏʀ喐technique that allows you to model a complex system in a way that is easy to understand and easy for the user to manipulate.
+Nʏ S˝ǳǳʾCʏCʏMɄ́嘗ʏ˲ʾˍ嘘GPT味 SAE
+S˝ǳǳʾ ǗʏʀǗǳʵ˝ 呷呸呹呲喐 ʵʏɧɄ˝ɄǗ喯ɧƪ̷ ʾǳɧƪ˝ǳǡS˝ǳǳʾ ǗʏʀǗǳʵ˝ 呹呺呹呵喐 ƪȣȣʾǳˍˍɄ̲ǳ ˝ʏʀǳ
+Gǳʀǳʾƪ˝Ʉʏʀ喐very important part of the design process.Thefirst step is to create a model that is easy to use and easy for the user to understand.
+Gǳʀǳʾƪ˝Ʉʏʀ喐high-level policy: The White House does not have a policy on <REMOVED>'s plans. The White house said that <REMOVED>and his team had not discussed the matter withGeneration: common practice in the world of computer science. The new law, which was introduced in 2010, requires that all data in public use be treated as such.
+Gǳʀǳʾƪ˝Ʉʏʀ喐thing? I’m not sure what is going on here.
+Gǳʀǳʾƪ˝Ʉʏʀ喐thing of the past. And that's what we're talking about here. A concept?
+(c) New prompt, ‘Politic/law’ and ‘aggressive tone’ concept
+Figure 10 More qualitative demonstration of the concept steering effect. CoCoMix and GPT2 models are 350M and
+124M parameter transformers, respectively. For CoCoMix, we manipulate the predicted logitz, while for GPT2, we
+adjust the SAE concept spacec by increasing the activation of a specific concept index
+17

@@ -1,0 +1,984 @@
+
+
+===== PAGE 1 =====
+
+Opt.Gear Technical Report
+Opt.Gear Team†
+Abstract
+We introduce Opt.Gear, a foundation model designed for efficient on-device deployment, real-tim
+inference, and strong task capability. It includes a dense model (1M, 270M, and 1B) with a context
+length of 64K. We designed a new hybrid architecture that combines a convolutional key-value gated
+mixerwithlocal-globalattentiontoreducetheKV-cachememorythattendstoincreaseexponentially
+with long context. This architecture delivers up to×4.9 faster prefill and decoding speeds on the
+NPUscomparedtomodelsofasimilarscalemodels. Froma2Ttokenscandidatecorpus, Opt.Gearis
+trainedonacurated0.5Ttokenssubsetwithoutknowledgedistillation. Thisisthemostdata-efficient
+of the existing foundation models. All models are released with open weights and deployment
+binaries for ONNX, Qualcomm NPU, and Apple ANE making Opt.Gear a practical base for edge
+applications that need fast, memory-efficient inference and strong task capabilities. Furthermore, to
+expandtheecosystemofon-devicegenerativelanguagemodels,weareintroducingtheOpt.Gear-1M
+thatcanbedeployedonMicro-ControllerUnits(MCUs),aTinyLanguageModel(TLM).Opt.Gear-1M
+is the first generative language model to achieve 20 TPS with W4A32 quantization on the ARM
+Cortex-M7 CPU of the STM32H747I-DISCO.
+Correspondence:contact@opt-ai.kr
+HuggingFace:https://huggingface.co/OptGear
+Figure 1 Decoder throughput benchmark of Opt.Gear-1B and its counterparts. For hardware evaluation, we report
+Prefill and Decode TPS across GEN4 and GEN5 using a model compiled with QAIRT.
+†Opt.Gear Team: Juneyoung Park <jyoung.park@opt-ai.kr>, Youngwook Kwon <ywook.kwon@opt-ai.kr>
+1
+arXiv:2608.01034v2  [cs.CL]  4 Aug 2026
+
+===== PAGE 2 =====
+
+Contents
+1 Introduction . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3
+2 Architecture . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4
+2.1 Basic Architecture . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5
+2.1.1 ConvKV-Gated Mixer . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5
+2.1.2 Memory-Efficient Caching Mechanism . . . . . . . . . . . . . . . . . . . . . . . . . . . 5
+2.1.3 Model Configuration . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6
+2.1.4 Device-Side Inference Analysis . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+2.1.5 Quantization-Aware Training . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9
+3 Pre-Training . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9
+3.1 Data Construction . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9
+3.2 Training Hyper-Parameters . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10
+3.3 Long Context Extension . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10
+3.4 Infrastructure . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10
+4 Post-Training . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10
+4.1 Supervised Fine-Tuning . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10
+4.1.1 Opt.Gear-1M Board-Control Post-Training . . . . . . . . . . . . . . . . . . . . . . . . . 11
+4.2 Evaluations . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11
+4.2.1 Evaluation Benchmarks . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11
+4.2.2 Inference Performance . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14
+4.3 Discussion . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16
+4.3.1 Training with a Minimal Corpus . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16
+5 Conclusion, Limitations, and Future Directions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16
+2
+
+===== PAGE 3 =====
+
+1 Introduction
+On-deviceLLMapplicationsrunningdirectlyonsmartphones,tablets,laptops,vehicles,robots,andembedded
+devices can provide low-latency responses, improved privacy, offline availability, and more predictable user
+experiences. However, these advantages come with strict system constraints. On-device models must operate
+under constrained SRAM, power efficiency, and real-time latency requirements across heterogeneous SoC
+environments that include CPUs, GPUs, and NPUs.
+Recent open-source language models [2, 5, 16, 38, 43] have achieved strong performance by scaling to billions
+or tens of billions of parameters and by optimizing inference efficiency for server-class GPUs. However, these
+models are designed on the assumption that high-capacity, high-bandwidth memory and high-performance
+accelerators are available. It remains a challenge to deploy these models directly on mobile and edge devices.
+Efficient model architecture design requires not only reducing the number of parameters but also optimized
+complex trade-offs between hardware runtime profiles, memory hierarchies, kernel compatibility, quantized
+variants suited to edge runtimes, and the significant computational cost of long-context inference.
+The Grouped-Query Attention (GQA) [1] is one of the major bottlenecks in on-device LLM inference. It
+has complexity of𝑂(𝑁2)with sequence length, adopting sliding window attention does not completely
+resolve this problem. The fundamental requirements of computing QK scores, applying attention masks,
+performing softmax normalization continue to exert heavy pressure on device memory and compute
+resources. Furthermore, auto-regressivedecodingrequirestheKV-cachetobestoredandaccessedrepeatedly
+for each attention layer. The memory usage and memory bandwidth requirements of the KV-cache increase
+proportionally with the context length. This is a significant bottleneck for latency and power consumption in
+mobile NPUs and GPUs, which have limited SRAM capacity and memory bandwidth.
+We introduce first generation of OptAI Foundation Models. It is optimized for on-device deployment. The
+Opt.Gear is not to build smaller language models, but to jointly improve downstream quality, device-side
+latency, memory efficiency, long-context capability, and practical deployability under hardware constraints.
+To achieve this, Opt.Gear adapt a hybrid architecture that replaced sliding attenetion to a softmax and matrix
+multiplication free local mixing module. This reduces the overhead of GQA computation and KV-cache
+access while preserving the representation.
+The core of Opt.Gear architecture is the ConvKV-Gated Mixer. It uses causal convolution to the key and
+value, and gates the values based on query-key interactions. The ConvKV-Gated Mixer does not need a
+sequence length dependent KV cache and reduces the KV cache capacity during long context decoding
+while maintaining a small, fixed-size convolution state. Opt.Gear also adopts GQA that preserves global
+informationroutingandlong-rangecontextaggregation. ThishybridarchitectureallowsOpt.Geartoimprove
+the inference efficiency while maintaining downstream quality.
+Opt.Gear was designed with a bilingual model that prioritizes the Korean language. We adopted the
+KORMo [23] tokenizer to improve tokenization efficiency for Korean and English. This is followed by
+Korean-English pretraining, long-context extension, and supervised fine-tuning. This multi-stage training
+process, Opt.Gear aims to bilingual understanding, mathematical and scientific reasoning, long-document
+comprehension, and instruction-following behavior.
+Opt.Gear is optimized for deployment compatibility and supports inference with Transformers [42],
+llama.cpp [15], ExecuTorch, and vLLM [24]. Furthermore, executable binary files optimized for NPU
+inference (Qualcomm Hexagon NPU, Apple ANE) are also provided.
+The key aspects of the Opt.Gear family are summarized as follows:
+• Data-efficient training: Opt.Gear is trained on a curated 0.5T tokens subset selected from a 2T tokens
+candidate corpus, without using knowledge distillation from a teacher model.
+• Hardware-aware architecture design: Opt.Gear is designed to be deployed on diverse device solutions,
+ranging from MCUs, mobile devices, and GPUs.
+3
+
+===== PAGE 4 =====
+
+• MCU-scale generation: Opt.Gear-1M extends the Opt.Gear design to microcontroller-class devices,
+targeting sub-1 MB deployment with W4A32 quantization on the ARM Cortex-M7 CPU.
+• NPU-friendly optimization: Opt.Gear replaces excessively used, unnecessary dynamic QKV matrix
+multiplication and softmax normalization operations with static linear, convolution, and element-wise
+operations.
+• Reduced KV-cache capacity: Opt.Gear replaces the sequence-length-dependent KV-cache of local
+attention layers with a small fixed-size convolutional state.
+Inthisreport,WedescribethedetailoftheOpt.Gearbackbonedesign,training,anddeploymentoptimization.
+Finally, we discuss related work, limitations, future directions, and the broader implications of Opt.Gear for
+edge deployment.
+2 Architecture
+Figure 2 Opt.Gear architecture.
+We introduced in Section 1 with hybrid architecture optimized under hardware constraints. The 3 dense
+model are released: Opt.Gear-1M, Opt.Gear-270M, and Opt.Gear-1B. In figure 2, Opt.Gear consists of GQA,
+ConvKV-Gated Mixer, dense modules. In this section, we describe the architecture design procedure, and the
+Opt.Gear-270M, Opt.Gear-1B configurations.
+4
+
+===== PAGE 5 =====
+
+2.1 Basic Architecture
+The core design objective of Opt.Gear is to reduce decoding-time memory traffic while preserving enough
+global context capacity for long-context tasks. Full attention provides strong content-addressable retrieval,
+but it requires repeated access to key/value states during decoding. In contrast, recurrent, state-space, and
+linear-attention style mechanisms [9,28,39,40,44] keep a bounded state, but they can weaken long-range
+retrieval and often rely on specialized kernels for their best speedups. Opt.Gear therefore uses a hybrid
+layout: a small set of attention layers handles global routing and mid-range context [7], while ConvKV-Gated
+Mixer blocks provide the common local mixing path using operations that are widely supported on CPUs,
+GPUs, and NPUs.
+2.1.1 ConvKV-Gated Mixer
+The ConvKV-Gated Mixer is the primary local sequence operator used in Opt.Gear. For an input hidden
+sequenceX=[𝑥 1, . . . , 𝑥𝑇]∈ℝ𝑇×𝑑, each token is first projected into query, key, and value streams:
+𝑞𝑡 =𝑥 𝑡𝑊𝑞 , 𝑘 𝑡 =𝑥 𝑡𝑊𝑘 , 𝑣 𝑡 =𝑥 𝑡𝑊𝑣 .
+The key and value streams are then mixed with causal depthwise 1D convolutions:
+e𝑘𝑡 =
+𝐿conv−1Õ
+𝑖=0
+𝑎𝑖⊙𝑘𝑡−𝑖, e𝑣 𝑡 =
+𝐿conv−1Õ
+𝑖=0
+𝑏𝑖⊙𝑣𝑡−𝑖,
+where 𝐿conv is the convolutional cache length,𝑎𝑖 and 𝑏𝑖 are channel-wise convolution weights, and invalid
+past positions are masked by causal padding.
+The convolved key stream modulates the current query through an element-wise gate, and the resulting gate
+selects information from the convolved value stream:
+𝑔𝑡 =𝜎(𝑞𝑡⊙e𝑘𝑡), 𝑦 𝑡 =𝑔 𝑡⊙e𝑣 𝑡 , 𝑜 𝑡 =𝑦 𝑡𝑊𝑜 .
+Here⊙denotes element-wise multiplication and𝜎 denotes the sigmoid function. This gives the mixer a
+content-dependent update, similar in spirit to attention, but without constructing a token-by-token attention
+score matrix or applying softmax over a local window.
+The block is intentionally local. It is not meant to replace all attention layers; instead, it replaces many
+sliding-window local attention layers whose main role is short-range context mixing. Long-range retrieval is
+assigned to the remaining GQA layers, while ConvKV-Gated Mixer layers provide low-cost local interaction
+through dense projections, causal depthwise convolution, element-wise gating, and an output projection.
+This design makes the layer easier to map onto edge runtimes than operators that require custom sequence
+kernels.
+2.1.2 Memory-Efficient Caching Mechanism
+In on-device inference, system performance is often limited not only by arithmetic throughput, but also by
+the cost of memory access. During auto-regressive decoding, each generated token requires the runtime
+to read persistent states from previous tokens and write the updated states back to memory. When these
+states no longer fit in on-chip SRAM, external DRAM traffic can become a major source of latency and power
+consumption.
+The persistent state is the KV-cache of GQA. Let𝐶 denote the context length,𝑊 the sliding-window size,
+and 𝑑kv the key/value dimension. A GQA stores key and value vectors for all previous tokens, while a
+sliding-window attention stores key and value vectors for the most recent𝑊tokens:
+Cacheglobal =𝑂(2𝐶𝑑kv),Cache local =𝑂(2𝑊 𝑑kv).
+5
+
+===== PAGE 6 =====
+
+The factor of two accounts for the key and value streams. Thus, even when local attention bounds the cache
+by a fixed window, increasing the window size directly increases the amount of live decoding state.
+ConvKV-GatedMixerchangesthislocal-cachepattern. Itdoesnotkeepatokenwindowforpairwiseattention
+scoring. Instead, it keeps a fixed convolution buffer for the projected key and value streams:
+𝒞𝐾 ,𝒞𝑉∈ℝ𝑑kv×𝐿conv ,Cache ConvKV =𝑂(2𝐿conv𝑑kv).
+Here 𝐿conv is determined by the convolution kernel size. This buffer is persistent decoding state, but it is a
+convolutional state rather than an attention KV-cache. After prefill, only the final𝐿conv projected key/value
+states need to remain live for each ConvKV layer. During decoding, the runtime appends the current
+key/value projections, drops the oldest entries, applies the depthwise convolution over the fixed buffer, and
+computes the gate for the current token.
+This mechanism does not eliminate the KV-cache from the entire model: the remaining GQA layers still
+maintain attention caches for global information routing. The saving comes from replacing many local
+attention layers, whose cache scales with𝑊, with ConvKV-Gated Mixer layers, whose persistent state
+scales only with𝐿conv. In Opt.Gear-270M and Opt.Gear-1B,𝐿conv =3 ; in Opt.Gear-1M,𝐿conv =4 . Because
+these values are much smaller than the sliding-window and independent of the context length, the mixer
+substantially reduces the live state and memory bandwidth required for local sequence modeling during
+long-context decoding.
+2.1.3 Model Configuration
+Table 1Configurations of Opt.Gear.
+Model size 1B 270M 1M
+𝑑_model 1,152 640 128
+Number of layers 26 18 5
+Normalization QK-LN QK-LN QK-LN
+Non-linearity GeGLU GeGLU ReLU6GLU
+Feedforward dimension 6,912 2,048 272
+Attention type Hybrid Hybrid Hybrid
+Head type GQA GQA GQA
+Number of heads 4 4 2
+Number of KV heads 1 1 1
+Sliding-window size 512 512 -
+Head size 256 256 64
+Conv kernel size 3 3 4
+Max sequence length 65,536 65,536 512
+RoPE global theta 1,000,000 1,000,000 1,000,000
+RoPE local theta 10,000 10,000 -
+Tokenizer KORMo KORMo BPE
+Vocab size 125,184 125,184 2,048
+Tied word embedding False False False
+The Opt.Gear model employs a hybrid sequence mixing architecture that combines global attention, local
+attention, and the ConvKV-Gated Mixer. The overall configuration of Opt.Gear-1B, Opt.Gear-270M, Opt.Gear-
+1M is summarized in Table 1.
+Opt.Gear keeps a small number of global attention layers and combines them with local attention and
+ConvKV-Gated Mixer layers. Global attention layers provide long-context context, local attention layers
+preserve mid-range context within a fixed window, and ConvKV-Gated Mixer layers focus on the short-range
+context.
+6
+
+===== PAGE 7 =====
+
+Opt.Gear-1B and Opt.Gear-270M use grouped-query attention (GQA) with four query heads and one
+key-value head. The head dimension is set to 256, and the sliding-window size is fixed to 512. Opt.Gear-1M
+uses a smaller GQA configuration with two query heads, one key-value head, and a head dimension of 64.
+This configuration reduces key-value cache capacity compared with multi-head attention while preserving
+multiple query heads for expressive token interaction.
+The ConvKV-Gated Mixer uses causal depthwise convolution and keeps fixed-size convolutional states for
+the key and value. Opt.Gear-1B and Opt.Gear-270M use a convolution kernel size of 3, while Opt.Gear-1M
+uses a kernel size of 4 to increase the local receptive field within a very small hidden dimension. Opt.Gear
+also adopts query-key normalization (QK-LN) [10]. The feed-forward network follows a dense gated MLP
+design: Opt.Gear-1B and Opt.Gear-270M use GeGLU [33], while Opt.Gear-1M uses ReLU6GLU. Opt.Gear-1B
+uses a hidden dimension of 1,152, 26 decoder layers, and a feed-forward dimension of 6,912. Opt.Gear-270M
+uses a hidden dimension of 640, 18 decoder layers, and a feed-forward dimension of 2,048. Opt.Gear-1M uses
+a hidden dimension of 128, 5 decoder layers, and a feed-forward dimension of 272.
+Forpositionalencoding,Opt.Gearusesrotarypositionembeddings[ 37]. Opt.Gear-1BandOpt.Gear-270Muse
+separateglobalandlocalbasefrequencies: theglobalRoPEthetaissetto1,000,000,whilethelocalRoPEtheta
+is set to 10,000. This configuration is used together with the hybrid attention layout to support long-context
+modeling up to 65,536 tokens. Opt.Gear-1M keeps the global RoPE theta of 1,000,000 but targets a shorter
+maximum sequence length of 512 tokens, reflecting the SRAM and latency constraints of MCU deployment.
+Opt.Gear-1B and Opt.Gear-270M use the KORMo tokenizer with a vocabulary size of 125,184. The tokenizer
+is designed to support Korean-English bilingual modeling, and the same vocabulary is shared across
+Opt.Gear-1B and Opt.Gear-270M.Opt.Gear-1M uses a custom byte-levelBPE tokenizer [32] with a vocabulary
+size of 2,048. This tokenizer supports compact English-language generation and is designed to keep the
+embedding tables and runtime memory footprint compatible with flash-limited deployment. We use untied
+word embeddings in all configurations, allowing the input embedding table and language modeling head to
+adapt independently during pretraining and instruction tuning.
+Overall, Opt.Gear is designed as a practical dense model family for on-device inference. Opt.Gear-1B
+targets a stronger quality-efficiency trade-off, while Opt.Gear-270M targets lower-latency deployment on
+more constrained mobile and edge devices. Both configurations share the same hybrid design and support
+64K context length, enabling long-context applications while reducing the local attention cache footprint.
+Opt.Gear-1M extends the family to MCU-class deployment, where the primary objective is not broad
+benchmark coverage but stable generative capability under extremely small flash, SRAM, and compute
+budgets.
+Opt.Gear-1M is designed for the lower end of on-device generative modeling, where the target hardware is a
+microcontroller rather than a mobile NPU or server GPU. This setting changes the optimization problem
+substantially. Flash capacity limits the number of parameters and tokenizer size, SRAM limits activation
+and cache storage, and the absence of large matrix accelerators makes operator simplicity more important
+than peak arithmetic throughput. Opt.Gear-1M therefore keeps the same design philosophy as the larger
+Opt.Gear models but scales every component around MCU constraints.
+The model uses a 128-dim hidden state, 5 decoder layers, 2 GQA query heads, a single key-value head, and a
+2,048 token BPE vocabulary. The 512 context length is chosen to support short interactive generation and
+command-style use cases while keeping cache and activation storage bounded. The ConvKV-Gated Mixer is
+especially useful in this regime because its state size is fixed by the convolution kernel rather than by the full
+context length. This avoids maintaining a large sequence-dependent cache on SRAM-limited hardware.
+For deployment, Opt.Gear-1M is evaluated with W4A32 quantization on the ARM Cortex-M7 CPU of the
+STM32H747I-DISCO. Under this configuration, Opt.Gear-1M reaches 20 tokens per second, demonstrating
+that an auto-regressive generative language model can run interactively on an MCU device. This result
+expandsthedeploymenttargetoftheOpt.Gearfamilyfrommobileandedgeacceleratorstodeeplyembedded
+systems such as sensors, controllers, small robots, and offline human-machine interfaces.
+7
+
+===== PAGE 8 =====
+
+2.1.4 Device-Side Inference Analysis
+We evaluate Opt.Gear-1M directly on the STM32H747I-DISCO rather than using a host-side simulator. The
+deployment target is the STM32H747XIH6 MCU, and the Cortex-M7 core is configured at 400 MHz. The
+measured binary uses a embedded C runtime generated for STM32CubeIDE and runs without depending
+on an ONNX [3] graph or the X-CUBE-AI [36] generated network. The runtime uses 4-bit weights, 16-bit
+embeddings and LM head, and 32-bit floating-point activations, corresponding to the W4A32 deployment
+setting used in this report.
+The device-side timing path is instrumented inside the firmware withHAL_GetTick. The prefill time is
+measured around the full prompt forward pass, and decoding time is measured around the per-token decode
+function. The firmware accumulates the number of generated tokens, prefill latency, decode latency, total
+inferencelatency,andtime-to-first-token(TTFT)acrossthebuilt-inpromptset,andthenprintsa timing[total]
+line through UART. Therefore, the reported throughput is measured from the actual Cortex-M7 execution
+path and reflects the model-compute portion of auto-regressive generation on the device.
+Table 2 Opt.Gear-1M device-side inference and build footprint on STM32H747I-DISCO.The per-token latency
+is derived from the measured throughput. Loadable section sizes are measured from the final STM32 ELF with
+arm-none-eabi-size.
+Item Measured or configured value
+Board STM32H747I-DISCO
+MCU / core STM32H747XIH6 / ARM Cortex-M7
+Configured CPU clock 400 MHz
+Quantized format W4A32 (q4 weights, q16 embedding/LM head)
+Measured throughput 20 tokens/s (50 ms/token)
+.text / .rodata section 1,596,400 bytes
+.data section 532 bytes
+.bss section 444,404 bytes
+Static RAM heap / stack 449,032 bytes
+Table 2 shows that the measured STM32 deployment is limited by both compute throughput and static
+memory allocation. The measured throughput of 20 tokens/s corresponds to roughly 50 ms per generated
+token, which is fast enough for short command interaction and simple local assistant behavior. This is an
+important threshold for MCU deployment: the model does not merely fit in the build, but also generates at a
+rate where a user can observe token-by-token output without a server or mobile accelerator.
+The build footprint also illustrates the main deployment trade-off. For the final ELF,arm-none-eabi-size
+reports 1,596,400 bytes of .text/.rodata, 532 bytes of .data, and 444,404 bytes of .bss. Including the reserved
+heap/stack region, the static RAM footprint is 449,032 bytes. This footprint is dominated by statically
+allocated activation, cache, and intermediate buffers in the embedded C runtime. In particular, the measured
+deployment build uses a 160-token sequence length and 40-token generation limit, even though the model
+configuration targets a longer maximum context. This choice keeps the auto-regressive cache and workspace
+boundedontheMCUwhilepreservingenoughcontextforshortinstructionsandembedded-controlprompts.
+These measurements confirm the practical role of the ConvKV-Gated Mixer in the Opt.Gear-1M. On a
+Cortex-M7 CPU, the expensive part of local sequence modeling is not only arithmetic, but also the movement
+and retention of state in a very small memory hierarchy. By using fixed-size convolutional states for local
+mixing and keeping only a small GQA cache for attention layers, Opt.Gear-1M reduces the amount of
+sequence-dependent state that must remain live during decoding. The resulting design is suitable for short,
+local generation on embedded systems, where predictable memory use and stable interactive latency are
+more important than long-context benchmark performance.
+8
+
+===== PAGE 9 =====
+
+2.1.5 Quantization-Aware Training
+Low-bit quantization reduces model size and computational cost, but often causes significant accuracy
+degradation. This degradation is determined not only by the bit-width but also by the quantization range,
+scale granularity, and discrete quantization grid. Post-training quantization cannot compensate for the
+resulting perturbations because the pretrained weights remain fixed. Quantization-aware training (QAT) [20]
+addresses this limitation by allowing the model to adapt to quantization during training.
+Conventional QAT typically initializes the quantization scale using simple weight statistics, such as the
+maximum absolute value. However, this approach treats all weight perturbations equally, even though their
+effects on the layer output depend on the input distribution. We therefore use calibration activations to
+estimate the sensitivity of each layer and initialize the group-wise INT4 scales accordingly.
+Following GPTQ [12], we formulate quantization as a layer-wise output reconstruction problem. For each
+quantization group, the initial scale is selected as
+Δ∗=arg min
+Δ
+∥𝑊 𝑋−𝑄Δ(𝑊)𝑋∥2
+𝐹 ,(1)
+where (W) is the full-precision weight matrix, (X) contains the calibration inputs, and (𝑄Δ(𝑊)) denotes
+the weights quantized with scale (Δ). This objective directly minimizes the discrepancy between the full-
+precision and quantized layer outputs. The curvature of the reconstruction objective with respect to weight
+perturbations is governed by the input correlation matrix (𝑋𝑋⊤). Consequently, the scale initialization
+accounts for the relative importance of different input directions, rather than treating all weight perturbations
+equally. We perform this initialization independently for symmetric INT4 groups of 32 weights.
+TheresultingscalesaresubsequentlyrefinedusingLearnedStepSizeQuantization(LSQ)[ 11]. Specifically,the
+scale( Δ𝑔)ofeachquantizationgroup(g)istreatedasalearnableparameter,anditsweightsarefake-quantized
+during the forward pass as
+b𝑊∗𝑔= Δ𝑔·clip
+
+round
+ 𝑊𝑔
+Δ𝑔
+
+, 𝑞∗min, 𝑞max
+
+,(2)
+where (𝑞min) and (𝑞max) define the final symmetric INT4 quantization grid. The non-differentiable rounding
+operation is approximated using a straight-through estimator during backpropagation. Following LSQ, the
+scalegradientsarenormalizedaccordingtothenumberofelementsineachgroupandthenumberofpositive
+quantization levels. This normalization prevents the scale updates from dominating the weight updates and
+enables the group-wise step sizes to be optimized jointly with the model parameters.
+Starting from the Hessian-based initialization, QAT jointly refines the full-precision weights and the LSQ
+step sizes under the global training objective, while the forward pass consistently emulates the final W4A16
+deployment format. The Hessian-based initialization provides scales with low local output distortion,
+whereas LSQ allows these scales to adapt to the quantization errors accumulated across layers and to their
+effect on the final task loss. Using the same group-wise INT4 grid during initialization, QAT, and final weight
+conversion also avoids a quantizer mismatch that could otherwise discard the learned scale structure at
+deployment time.
+3 Pre-Training
+3.1 Data Construction
+We first collect a large candidate corpus of approximately 2T tokens from English, Korean, mathematical,
+and general web sources. Rather than using the entire collected corpus, we apply filtering, deduplication,
+and mixture rebalancing to construct a curated 0.5T tokens training set. This design prioritizes data quality
+9
+
+===== PAGE 10 =====
+
+and Korean-English balance over raw token count, allowing Opt.Gear to achieve competitive performance
+under a limited compute budget without teacher-model distillation. The Opt.Gear models are pre-trained on
+a mixture comprising roughly 92% English text, 6% Korean text, and 2% math. Notably, we did not train the
+model on code data, specifically considering that models of the 270M and 1B are not used for code generation
+tasks.
+The KORMo tokenizer employs a byte-level BPE (Byte Pair Encoding) algorithm. Compared to other
+commercial tokenizers, it maintains a similar performance in English while significantly outperforming
+commercial models in Korean.
+Opt.Gear-1Mfollowsaseparatetokenizeranddata-designobjective. SincethemodeltargetsMCUdeployment,
+it uses a much smaller 2,048 tokens BPE vocabulary and prioritizes compact English generation, short-form
+command following, and predictable structured outputs. Unlike Opt.Gear-270M, Opt.Gear-1B, and Opt.Gear-
+1M is not trained with the general pre-training corpus in this stage. We do not conduct a separate web-scale
+pre-training phase for Opt.Gear-1M, its task-specific learning procedure is described in the post-training
+section.
+3.2 Training Hyper-Parameters
+We employ the AdamW [26] optimizer with hyper-parameters set to𝛽1 =0.9 , 𝛽2 =0.95 , andweight_decay=
+0.1. We set the maximum sequence length to 4K during pre-training, and pre-train Opt.Gear on 0.5T tokens.
+As for the learning rate scheduling, we first linearly increase it from 0 to1.0×10−4during the first 2K steps.
+Then, wekeepaconstantlearningrateof 1×10−4untilthemodelconsumes2Ttrainingtokens. Subsequently,
+we also linearly decay the learning rate to1×10−5during the last 2K steps. The gradient clipping norm is set
+to 1.0.
+3.3 Long Context Extension
+WeadoptasimilarapproachtoKORMotoenablelongcontextcapabilitiesinOpt.Gear. Afterthepre-training
+stage, we apply prolong-data-64k [14] corpus for context extension and perform two additional training
+phases, each comprising 10B tokens in both English and Korean, to progressively expand the context window
+from 4K to 32K and then to 64K.
+3.4 Infrastructure
+Each node in the H200 [27] cluster contains 8 GPUs connected by NVLink and NVSwitch within nodes.
+The training of Opt.Gear is supported by the Nanotron [19] framework, supporting 3D parallelism, and
+performanceoptimizationsforlarge-scaletrainingworkloads. Onthewhole,Opt.Gearapplies8-wayPipeline
+Parallelism (PP), 1-way Tensor Parallelism (TP), and ZeRO-1 Data Parallelism (DP).
+4 Post-Training
+4.1 Supervised Fine-Tuning
+Post-trainingadaptsthebaseOpt.Gearmodelstoinstruction-followingbehaviorwhilekeepingthedeployment
+constraints of small on-device models in mind. For Opt.Gear-270M and Opt.Gear-1B, we first apply general
+Supervised Fine-Tuning (SFT) to improve helpfulness, formatting reliability, and dialogue-style instruction
+following. We then apply reasoning-oriented SFT to improve step-by-step mathematical and analytical
+responses. Thistwo-stagedesignseparatesbroadinstructionalignmentfromreasoning-formatspecialization,
+reducing the risk that reasoning-style data overwhelms everyday assistant behavior.
+Opt.Gear Base and Instruction models share the same tokenizer, with additional control tokens dedicated to
+instruction formatting. A key difference is that Base models output an<EOS> token at the end of generation,
+while Instruction models output<EOT> at the end of the generation. Fine-tuning either model type therefore
+requires adding the corresponding end token and ensuring that the training examples terminate with the
+10
+
+===== PAGE 11 =====
+
+same convention used by the target runtime. This is particularly important for on-device inference, where
+malformed termination can waste decoding steps and increase latency.
+During SFT data construction, we prioritize concise answers, deterministic formatting, and task coverage
+that is useful in local assistant scenarios. The post-training mixture includes general instruction following,
+Korean-English bilingual dialogue, summarization, rewriting, mathematical reasoning, and safety-aware
+refusal examples. We avoid relying on teacher-model distillation as a required training signal; instead,
+post-training is used to shape output format, task controllability, and response style on top of the pre-trained
+Opt.Gear-270M and Opt.Gear-1B models.
+4.1.1 Opt.Gear-1M Board-Control Post-Training
+Opt.Gear-1M follows a different post-training path from Opt.Gear-270M and Opt.Gear-1B. Instead, Opt.Gear-
+1M is trained for a narrow embedded-control setting in which the model maps short natural-language
+commands to structured board-control intents. This design intentionally favors predictable command
+generation over broad open-domain language ability, matching the constraints of MCU deployment.
+To specialize Opt.Gear-1M for STM32 board-control use cases, we construct a GPT-generated synthetic
+command dataset, denoted asstm32_cmd_synth. The dataset contains 50,000 prompt-response pairs. Each
+prompt is a short natural-language command for controlling the STM32 board, and each target response is
+a compact JSON-style control intent. The action space covers LCD, LED, and camera control. We use this
+dataset in the Opt.Gear-1M post-training stage so that the model learns to translate informal user requests
+into structured device-control commands rather than producing unconstrained free-form text.
+4.2 Evaluations
+4.2.1 Evaluation Benchmarks
+Smallmodelsoftenfailevaluationsbecausetheystruggletooutputanswersintheexpectedformat. Therefore,
+to ensure a fair evaluation, we conducted our assessments using the LM Evaluation Harness [13].
+The base model of Opt.Gear is pretrained on a bilingual corpus with English and Korean constituting
+the majority, so we evaluate its performance on a series of benchmarks primarily in English and Korean.
+Considered benchmarks are categorized and listed as follows:
+Multi-subject multiple-choicedatasets include MMLU [17], MMLU-Pro [41], KMMLU [34], and GPQA [30].
+Language understanding and reasoningdatasets include WinoGrande [31], HellaSwag [45], PIQA [6], and
+ARC [8].
+Korea understanding and culturedatasets include CLIcK [22], HAERAE [35], and KoBEST [21].
+We adopt perplexity-based evaluation for datasets including HellaSwag, PIQA, WinoGrande, MMLU,
+MMLU-Pro, GPQA, ARC-Easy, ARC-Challenge, KMMLU, and KoBEST.
+• Knowledge Capabilities: Opt.Gear demonstrates competitive performance in MMLU, MMLU-Pro,
+and GPQA relative to baselines matched in size. Additionally, as shown in the results, Opt.Gear-1B
+scores 43.2% on MMLU and 30.3% on GPQA, explicitly outperforming both Gemma3-1B and EXAONE
+4.0-1.2B.
+• Language Understanding and Reasoning: Opt.Gear models exhibit robust commonsense and reasoning
+capabilities. In the 1B–2B parameter range, Opt.Gear-1B achieves 70.8% on ARC-Easy and 71.2% on
+PIQA, outperforming EXAONE 4.0-1.2B. In the sub-1B category, Opt.Gear-270M demonstrates highly
+competitive reasoning, scoring 67.3% on PIQA and 59.1% on ARC-Easy, which successfully surpasses
+the distilled Gemma3-270M.
+• Korea Understanding and Culture: Given its bilingual pretraining corpus, Opt.Gear demonstrates
+distinctsuperiorityinKorean-specificbenchmarks. Opt.Gear-1BcomprehensivelyoutperformsGemma3-
+11
+
+===== PAGE 12 =====
+
+1B,Llama3.2-1B,andEXAONE4.0-1.2BacrossallKoreantasks(KMMLU,KoBEST,CLIcK,andHAERAE).
+Notably, on HAERAE, Opt.Gear-1B scores 44.2%, leading Gemma3-1B and Llama3.2-1B by significant
+margins. This trend is consistent at the tiny model scale, where Opt.Gear-270M records 30.0% on
+KMMLU and 51.9% on KoBEST, beating both SmolLM2-135M and Gemma3-270M.
+• Training and Data Efficiency: A crucial takeaway from both tables is the exceptional data efficiency of
+the Opt.Gear models. While baseline models like Gemma3, Llama3.2, LFM2.5, and Qwen3 are trained
+on massive datasets (ranging from 2T up to 36T tokens) and frequently leverage knowledge distillation,
+both Opt.Gear-270M and Opt.Gear-1B achieve highly competitive—and often superior—performance
+utilizing only 0.5T tokens without any distillation.
+12
+
+===== PAGE 13 =====
+
+Table 3Performance of tiny language models (135M–1B parameters) across English, and Korean benchmarks. All results
+are obtained using Language Model Evaluation Harness, and may differ from other reported scores.
+Benchmark Opt.Gear-270M SmolLM2-135M Gemma3-270M LFM2.5-350M Qwen3-0.6B
+# Trained Tokens 0.5T 2T 6T 28T 36T
+Distilled✗ ✗ ✓ ✓ ✓
+English
+MMLU 25.9 25.3 26.5 41.0 47.3
+GPQA 23.7 21.2 22.7 26.8 29.3
+ARC-Easy 59.1 63.3 56.1 69.0 71.4
+ARC-Challenge 29.5 28.8 28.0 37.1 40.2
+HellaSwag 38.4 43.4 38.9 42.2 46.7
+PIQA 67.3 66.5 66.9 65.8 67.4
+WinoGrande 51.5 54.8 51.9 51.6 55.4
+OBQA 31.6 30.8 31.6 30.4 32.4
+Korean
+KMMLU 30.0 29.1 28.0 31.4 35.0
+KoBEST 51.9 48.7 50.0 51.1 54.4
+CLIcK 27.2 22.5 27.3 24.0 36.7
+HAERAE 21.5 18.9 20.4 24.8 37.0
+Table 4Performance of small language models (1B–2B parameters) across English, and Korean benchmarks. All results
+are obtained using Language Model Evaluation Harness, and may differ from other reported scores.
+Benchmark Opt.Gear-1B Gemma3-1B Llama3.2-1B EXAONE 4.0-1.2B LFM2.5-1.2B Qwen3-1.7B
+# Trained Tokens 0.5T 2T 9T 12T 28T 36T
+Distilled✗ ✓ ✓ ✓ ✓ ✓
+English
+MMLU 43.2 39.8 46.1 37.2 51.1 60.3
+MMLU-Pro 11.3 13.7 19.4 42.8 19.7 43.0
+GPQA 30.3 23.2 28.8 25.3 27.3 24.8
+ARC-Easy 70.8 70.0 72.4 58.3 79.2 80.0
+ARC-Challenge 38.6 40.1 41.7 34.0 51.0 53.0
+HellaSwag 56.0 60.0 61.1 42.4 62.1 60.3
+PIQA 71.2 72.5 74.8 55.4 72.9 72.4
+WinoGrande 58.2 58.7 62.1 53.9 60.0 60.9
+OBQA 36.8 36.4 36.2 27.8 40.8 39.4
+Korean
+KMMLU 36.0 30.7 29.9 32.6 29.2 41.6
+KoBEST 60.3 59.5 51.8 50.7 59.1 62.8
+CLIcK 39.7 37.8 30.6 32.9 38.3 49.4
+HAERAE 44.2 35.3 32.6 30.2 33.9 52.0
+13
+
+===== PAGE 14 =====
+
+Table 5Performance comparison of quantization methods. The metrics are grouped by language (English and Korean)
+and rounded to one decimal place. The best post-training quantization result for each metric is highlighted in bold.
+Model Method English Korean
+MMLU HellaSwag WinoGrande KMMLU KoBEST HAERAE
+Opt.Gear-1B
+QAT 41.3 54.0 58.3 35.0 60.4 42.7
+RTN 39.8 53.9 56.9 33.8 59.8 39.9
+AWQ 39.5 52.6 56.5 32.7 59.6 38.2
+GPTQ 39.6 53.5 57.1 34.4 59.6 41.0
+Gemma3-1B
+QAT 35.8 51.4 55.0 26.9 56.2 31.2
+RTN 32.5 48.5 53.8 21.2 55.1 23.6
+AWQ 34.3 50.5 53.7 23.3 56.4 29.7
+GPTQ 34.9 49.6 54.9 23.3 55.1 27.1
+Llama3.2-1B
+RTN 41.1 58.6 55.7 29.2 23.9 50.6
+AWQ 43.4 60.8 58.8 28.7 30.9 50.7
+GPTQ 43.6 61.1 57.4 29.2 28.6 50.7
+EXAONE 4.0-1.2B
+RTN 34.5 40.4 53.9 30.4 29.2 50.8
+AWQ 24.4 25.6 51.1 19.1 46.5 20.7
+GPTQ 35.3 41.6 53.9 31.5 49.9 29.5
+Qwen3-1.7B
+RTN 56.1 59.8 59.3 40.3 47.4 60.3
+AWQ 57.9 59.8 59.2 40.8 46.9 61.9
+GPTQ 56.2 60.1 57.9 39.5 46.6 59.2
+We also evaluated various quantization methods, applying PTQ techniques (RTN, AWQ [25], GPTQ) directly
+to the QAT baselines of Opt.Gear-1B and Gemma3-1B. Opt.Gear-1B demonstrates remarkable stability within
+this pipeline. On the English benchmark, it experiences only a marginal performance drop, dipping slightly
+from 41.3% to 39.8% after applying RTN. Gemma3-1B, conversely, suffers a much more severe degradation,
+falling from 35.8% to 32.5% under the identical quantization process.
+Llama3.2-1B, Qwen3-1.7B achieve competitive English PTQ scores, it struggles significantly on Korean
+tasks. By leveraging its robust QAT foundation prior to PTQ application, Opt.Gear-1B reliably sustains high
+performance across both languages without experiencing catastrophic forgetting or significant precision-loss
+degradation.
+4.2.2 Inference Performance
+Experimental Setup.We evaluated practical inference efficiency in on-device environments by conducting a
+cross-benchmark that included various hardware processors (CPU, GPU, NPU) and runtimes (Qualcomm
+AI Engine Direct [29], llama.cpp, CoreML [4]). As evaluation metrics, we separately measured the speed
+of Prefill (Prompt Processing, tokens/sec), which analyzes large amounts of context, and Decode (Token
+Generation, tokens/sec), which generates text sequentially. We applied W4A16 quantization in all runtime
+environments, and configured the embedding and LM head layers to maintain 16-bit precision.
+Qualcomm AI Engine Direct (QAIRT).To achieve the acceleration performance of the Hexagon NPU on
+the QAIRT pipeline, this experiment performed comprehensive optimizations at the input/output (I/O),
+operation, and graph levels.
+Opt.Gear-1B demonstrated overwhelming inference performance on Qualcomm Snapdragon chipset. On the
+Snapdragon GEN5, Opt.Gear-1B achieved a prefill speed of 7,042 tokens/sec, significantly outperforming
+comparable models such as Llama 3.2-1B (4,481 tokens/sec) and Gemma 3-1B (3,226 tokens/sec).
+14
+
+===== PAGE 15 =====
+
+This extreme performance gap suggests that Opt.Gear-1B architecture is highly optimized for efficient
+utilization of HTP VTCM (8 MB) in matrix units. We confirmed that server-grade prompt throughput can be
+achieved even in mobile environments through bottleneck-free, constrained HTP VTCM access.
+Table 6On-device NPU inference performance (Prefill / Decode tokens per second) on Qualcomm AI Runtime.
+Model NPU
+Snapdragon GEN5 Snapdragon GEN4
+Opt.Gear-1B 7042/86 5882/80
+Llama3.2-1B 4481 / 65 3013 / 50
+Gemma3-1B 3226 / 61 2724 / 51
+Qwen 3-1.7B 2466 / 41 1739 / 32
+EXAONE 4.0-1.2B 4386 / 57 3436 / 49
+llama.cpp.Experimental results in the llama.cpp environment, a general-purpose open-source inference
+framework, clearly demonstrate the importance of runtime optimization. While Opt.Gear-1B maintained
+excellent and stable performance in CPU and GPU environments, an exceptional sharp drop in performance
+was observed in the NPU environment (Prefill 290 tokens/sec based on Snapdragon GEN5). This appears
+to be due to a bottleneck occurring because the llama.cpp NPU backend failed to allocate and optimize the
+Sliding Window Attention pattern using hardware accelerators. On the other hand, the LFM 2.5-1.2B model,
+which is not affected by the structure, recorded 2691 tokens/sec in the same environment and occupied the
+NPU normally.
+Table7Cross-processorinferenceperformance(Prefill/Decode).Top:QualcommSnapdragonchipsetsusingllama.cpp.
+Bottom:Apple iPhone models using CoreML Runtime. Unavailable metrics are denoted with hyphens.
+Model Snapdragon GEN5 Snapdragon GEN4
+CPU GPU NPU CPU GPU NPU
+Opt.Gear-1B 686/ 36 1230/64 290 /65 626/ 30 1118/64 217 /59
+Llama3.2-1B 470 / 33 1061 / 39 1912 / 47 409 / 29 947 / 34 1339 / 47
+Gemma3-1B 286 /571201 / 54 285 / 54 580 / 28 1059 / 52 215 / 43
+LFM2.5-1.2B 565 / 40 1164 / 552691/ 61 515 /331043 / 511972/ 57
+EXAONE 4.0-1.2B 367 / 27 796 / 29 1315 / 37 319 / 20 713 / 24 895 / 35
+Model iPhone 17 Pro iPhone 16 Pro
+CPU GPU NPU CPU GPU NPU
+Opt.Gear-1B 613/58 2050/98 3085/97 642/56 999 / 40 2589/80
+Llama3.2-1B 362 / 41 1308 / 74 1073 / 34 381 / 40 615 / 42 696 / 25
+Gemma3-1B 544 / 45 1852 / 60 2380 / 90 587 / 461010/ 34 1862 / 70
+LFM2.5-1.2B 466 / 50 1503 / 80 - / - 455 / 42 679 /47- / -
+EXAONE 4.0-1.2B 286 / 40 1192 / 66 590 / 20 254 / 33 379 / 34 319 / 15
+CoreML Runtime.Opt.Gear-1B also demonstrated outstanding versatility by achieving the highest perfor-
+mance in the CoreML. In particular, on the iPhone 17 Pro, it delivered significantly higher prefill throughput
+thanothermodelsonboththeGPU(2,050tokens/sec)andtheNPU(3,085tokens/sec). Theseresultsareeven
+more remarkable given the hardware limitations inherent to Apple Silicon. The ANE (Apple Neural Engine)
+is significantly impacted by memory bottlenecks, which have a major negative effect on inference speeds. As
+a result, the Llama 3.2 and EXAONE 4.0 models, which adopt a full-attention architecture, showed significant
+15
+
+===== PAGE 16 =====
+
+latency and performance degradation. The LFM 2.5-1.2B model was excluded from NPU measurement
+because there was no CoreML binary.
+4.3 Discussion
+4.3.1 Training with a Minimal Corpus
+Manyrecentsmalllanguagemodelsrelyondistillationfromlargerteachermodelstoobtainstrongbenchmark
+performance with limited parameter counts. Distillation can improve sample efficiency, reasoning style, and
+answer formatting, but it also introduces a large additional training and storage cost. Opt.Gear is trained
+without knowledge distillation (KD) [18] from a teacher model. This makes the training recipe simpler to
+reproduce and keeps the model behavior more directly tied to the curated pre-training and post-training data.
+This decision is motivated not only by model-design clarity, but also by practical resource constraints.
+Opt.Gear is trained with a limited setup of 8×H200 140 GB GPUs. Under this budget, we estimate that even
+a non-distilled 1T-token training run would require approximately 30 days. Online knowledge distillation
+is substantially more expensive because every student update also requires teacher-model inference. We
+further estimate that a 100B tokens online KD run would already require approximately 30 days, making it
+impractical to scale to the 0.5T tokens Opt.Gear recipe.
+Offline KD is also not practical under this setting. Storing teacher logits avoids repeated teacher inference,
+but the storage requirement becomes the bottleneck. When storing teacher Top-𝐾=32 logits, 1 TB of storage
+can hold only about 6B tokens. This is less than 2% of a 0.5T tokens corpus, and therefore cannot cover the
+training data at the scale required for Opt.Gear without either repeatedly regenerating logits or maintaining
+prohibitively large storage.
+Table 8 Practical constraints of teacher distillation for Opt.Gear.Estimates are based on the available 8-H200-140GB
+training setup.
+Training strategy Estimated requirement Implication
+Non-distilled training 1T tokens require about 30 days Already compute-intensive under the
+available hardware budget
+Online KD 100B tokens require about 30 days Too expensiveto scaleto the 0.5Ttokens
+Opt.Gear recipe
+Offline KD with Top-𝐾=32 log-
+its
+1 TB stores only about 6B tokens Storage cannot cover the required train-
+ing corpus scale
+Thischoicecreatesadifferenttrade-off. Withoutateachermodel,Opt.Gearmustacquireknowledge,bilingual
+capability, and reasoning patterns from the training corpus itself. As a result, the quality of data filtering,
+tokenizer design, and curriculum scheduling becomes especially important. The advantage is that the final
+model provides a clearer measurement of architecture and data efficiency, particularly for Korean-English
+bilingual modeling and long-context on-device deployment.
+5 Conclusion, Limitations, and Future Directions
+Opt.Gear-270M and Opt.Gear-1B are trained as Korean-English bilingual models, while Opt.Gear-1M extends
+the same hardware-aware design philosophy to microcontroller-scale English generation. For the larger
+models,thetrainingpipelinecombinesalimitedbudgetof0.5Ttokens,long-contextextension,andinstruction
+tuningwithoutrelyingonteacher-modeldistillation. ForOpt.Gear-1M,thepipelineskipsgeneralpre-training
+andinsteadusestask-focusedtrainingonSTM32board-controlcommands,togetherwithacompacttokenizer,
+a 512-token context window, W4A32 deployment, and interactive generation on MCU hardware. This design
+emphasizes data efficiency, deployability, and transparent measurement of the capabilities provided by the
+model architecture itself.
+16
+
+===== PAGE 17 =====
+
+Nevertheless, the constrained 0.5T tokens training budget also limits the capabilities of Opt.Gear-270M and
+Opt.Gear-1B, particularly in complex reasoning and mathematical reasoning tasks that typically benefit from
+largerandmorecarefullystructuredtrainingcorpus. Thecurrentresultsthereforereflectnotonlythecapacity
+of the proposed architecture but also the limitations of the available data and compute budget. Because
+data scale, data composition, and model capacity were not independently scaled in this study, the results do
+not yet establish whether the remaining reasoning gap originates primarily from model size, insufficient
+task-relevant data, or training inefficiency.
+Future work should therefore focus not only on increasing the number of training tokens, but also on
+improving the capability gained per token. Promising directions include higher-quality data selection,
+domain-aware mixture optimization, curriculum scheduling, targeted reasoning and mathematical data,
+and training objectives that make more effective use of limited compute. Investigating these methods under
+a fixed data or compute budget will be important for determining how much the reasoning capability of
+compact models can be improved without sacrificing the deployment efficiency that Opt.Gear is designed to
+provide.
+References
+[1] Joshua Ainslie, James Lee-Thorp, Michiel de Jong, Yury Zemlyanskiy, Federico Lebrón, and Sumit Sanghai.
+Gqa: Training generalized multi-query transformer models from multi-head checkpoints, 2023. URLhttps:
+//arxiv.org/abs/2305.13245.
+[2] Alexander Amini, Anna Banaszak, Harold Benoit, Arthur Böök, Tarek Dakhran, Song Duong, Alfred Eng,
+Fernando Fernandes, Marc Härkönen, Anne Harrington, Ramin Hasani, Saniya Karwa, Yuri Khrustalev, Maxime
+Labonne, Mathias Lechner, Valentine Lechner, Simon Lee, Zetian Li, Noel Loo, Jacob Marks, Edoardo Mosca,
+Samuel J. Paech, Paul Pak, Rom N. Parnichkun, Alex Quach, Ryan Rogers, Daniela Rus, Nayan Saxena, Bettina
+Schlager, Tim Seyde, Jimmy T. H. Smith, Aditya Tadimeti, and Neehal Tumma. Lfm2 technical report, 2025. URL
+https://arxiv.org/abs/2511.23404.
+[3] Chun-Wei Andreas and contributors. Onnx. https://github.com/huggingface/nanotron, 2024. Open Neural
+Network Exchange.
+[4] Apple. Core ml tools.https://github.com/apple/coremltools.
+[5] Kyunghoon Bae, Eunbi Choi, Kibong Choi, Stanley Jungkyu Choi, Yemuk Choi, Kyubeen Han, Seokhee Hong,
+Junwon Hwang, Taewan Hwang, Joonwon Jang, Hyojin Jeon, Kĳeong Jeon, Gerrard Jeongwon Jo, Hyunjik Jo, Jiyeon
+Jung, Euisoon Kim, Hyosang Kim, Jihoon Kim, Joonkee Kim, Seonghwan Kim, Soyeon Kim, Sunkyoung Kim,
+Yireun Kim, Yongil Kim, Youchul Kim, Edward Hwayoung Lee, Gwangho Lee, Haeju Lee, Honglak Lee, Jinsik
+Lee, Kyungmin Lee, Sangha Park, Young Min Paik, Yongmin Park, Youngyong Park, Sanghyun Seo, Sihoon Yang,
+Heuiyeen Yeen, Sihyuk Yi, and Hyeongu Yun. Exaone 4.0: Unified large language models integrating non-reasoning
+and reasoning modes, 2026. URLhttps://arxiv.org/abs/2507.11407.
+[6] Yonatan Bisk, Rowan Zellers, Ronan Le Bras, Jianfeng Gao, and Yejin Choi. PIQA: reasoning about physical
+commonsense in natural language. InThe Thirty-FourthAAAI Conference on Artificial Intelligence, AAAI 2020,
+The Thirty-Second Innovative Applications of Artificial Intelligence Conference, IAAI 2020, The Tenth AAAI
+Symposium on Educational Advances in Artificial Intelligence, EAAI 2020, New York,NY,USA, February 7-12,
+2020, pages 7432–7439. AAAI Press, 2020. doi: 10.1609/aaai.v34i05.6239. URLhttps://doi.org/10.1609/aaai.
+v34i05.6239.
+[7] Rewon Child, Scott Gray, Alec Radford, and Ilya Sutskever. Generating long sequences with sparse transformers,
+2019. URLhttps://arxiv.org/abs/1904.10509.
+[8] Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot, Ashish Sabharwal, Carissa Schoenick, and Oyvind Tafjord.
+Think you have solved question answering? try arc, the AI2 reasoning challenge.CoRR, abs/1803.05457, 2018. URL
+http://arxiv.org/abs/1803.05457.
+[9] Tri Dao and Albert Gu. Transformers are ssms: Generalized models and efficient algorithms through structured
+state space duality, 2024. URLhttps://arxiv.org/abs/2405.21060.
+17
+
+===== PAGE 18 =====
+
+[10] Mostafa Dehghani, Josip Djolonga, Basil Mustafa, Piotr Padlewski, Jonathan Heek, Justin Gilmer, Andreas Steiner,
+Mathilde Caron, Robert Geirhos, Ibrahim Alabdulmohsin, Rodolphe Jenatton, Lucas Beyer, Michael Tschannen,
+Anurag Arnab, Xiao Wang, Carlos Riquelme, Matthias Minderer, Joan Puigcerver, Utku Evci, Manoj Kumar,
+Sjoerd van Steenkiste, Gamaleldin F. Elsayed, Aravindh Mahendran, Fisher Yu, Avital Oliver, Fantine Huot,
+Jasmĳn Bastings, Mark Patrick Collier, Alexey Gritsenko, Vighnesh Birodkar, Cristina Vasconcelos, Yi Tay, Thomas
+Mensink, Alexander Kolesnikov, Filip Pavetić, Dustin Tran, Thomas Kipf, Mario Lučić, Xiaohua Zhai, Daniel
+Keysers, Jeremiah Harmsen, and Neil Houlsby. Scaling vision transformers to 22 billion parameters, 2023. URL
+https://arxiv.org/abs/2302.05442.
+[11] Steven K. Esser, Jeffrey L. McKinstry, Deepika Bablani, Rathinakumar Appuswamy, and Dharmendra S. Modha.
+Learned step size quantization, 2020. URLhttps://arxiv.org/abs/1902.08153.
+[12] Elias Frantar, Saleh Ashkboos, Torsten Hoefler, and Dan Alistarh. Gptq: Accurate post-training quantization for
+generative pre-trained transformers, 2023. URLhttps://arxiv.org/abs/2210.17323.
+[13] Leo Gao, Jonathan Tow, Baber Abbasi, Stella Biderman, Sid Black, Anthony DiPofi, Charles Foster, Laurence Golding,
+Jeffrey Hsu, Alain Le Noac’h, Haonan Li, Kyle McDonell, Niklas Muennighoff, Chris Ociepa, Jason Phang, Laria
+Reynolds, Hailey Schoelkopf, Aviya Skowron, Lintang Sutawika, Eric Tang, Anish Thite, Ben Wang, Kevin Wang,
+and Andy Zou. The language model evaluation harness, 07 2024. URLhttps://zenodo.org/records/12608602.
+[14] Tianyu Gao, Alexander Wettig, Howard Yen, and Danqi Chen. How to train long-context language models
+(effectively), 2025. URLhttps://arxiv.org/abs/2410.02660.
+[15] Georgi Gerganov and contributors. llama.cpp.https://github.com/ggml-org/llama.cpp, 2023. LLM inference in
+C/C++.
+[16] AaronGrattafiori, AbhimanyuDubey, AbhinavJauhri, AbhinavPandey, AbhishekKadian, AhmadAl-Dahle, Aiesha
+Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, Amy Yang, Angela Fan, Anirudh Goyal, Anthony Hartshorn,
+Aobo Yang, Archi Mitra, Archie Sravankumar, Artem Korenev, Arthur Hinsvark, Arun Rao, Aston Zhang, Aurelien
+Rodriguez, Austen Gregerson, Ava Spataru, Baptiste Roziere, Bethany Biron, Binh Tang, Bobbie Chern, Charlotte
+Caucheteux, Chaya Nayak, Chloe Bi, Chris Marra, Chris McConnell, Christian Keller, Christophe Touret, Chunyang
+Wu, Corinne Wong, Cristian Canton Ferrer, Cyrus Nikolaidis, Damien Allonsius, Daniel Song, Danielle Pintz,
+Danny Livshits, Danny Wyatt, David Esiobu, Dhruv Choudhary, Dhruv Mahajan, Diego Garcia-Olano, Diego
+Perino, Dieuwke Hupkes, Egor Lakomkin, Ehab AlBadawy, Elina Lobanova, Emily Dinan, Eric Michael Smith, Filip
+Radenovic, Francisco Guzmán, Frank Zhang, Gabriel Synnaeve, Gabrielle Lee, Georgia Lewis Anderson, Govind
+Thattai, Graeme Nail, Gregoire Mialon, Guan Pang, Guillem Cucurell, Hailey Nguyen, Hannah Korevaar, Hu Xu,
+Hugo Touvron, Iliyan Zarov, Imanol Arrieta Ibarra, Isabel Kloumann, Ishan Misra, Ivan Evtimov, Jack Zhang, Jade
+Copet, Jaewon Lee, Jan Geffert, Jana Vranes, Jason Park, Jay Mahadeokar, Jeet Shah, Jelmer van der Linde, Jennifer
+Billock, Jenny Hong, Jenya Lee, Jeremy Fu, Jianfeng Chi, Jianyu Huang, Jiawen Liu, Jie Wang, Jiecao Yu, Joanna
+Bitton, Joe Spisak, Jongsoo Park, Joseph Rocca, Joshua Johnstun, Joshua Saxe, Junteng Jia, Kalyan Vasuden Alwala,
+Karthik Prasad, Kartikeya Upasani, Kate Plawiak, Ke Li, Kenneth Heafield, Kevin Stone, Khalid El-Arini, Krithika
+Iyer, Kshitiz Malik, Kuenley Chiu, Kunal Bhalla, Kushal Lakhotia, Lauren Rantala-Yeary, Laurens van der Maaten,
+Lawrence Chen, Liang Tan, Liz Jenkins, Louis Martin, Lovish Madaan, Lubo Malo, Lukas Blecher, Lukas Landzaat,
+Luke de Oliveira, Madeline Muzzi, Mahesh Pasupuleti, Mannat Singh, Manohar Paluri, Marcin Kardas, Maria
+Tsimpoukelli,MathewOldham,MathieuRita,MayaPavlova,MelanieKambadur,MikeLewis,MinSi,MiteshKumar
+Singh, Mona Hassan, Naman Goyal, Narjes Torabi, Nikolay Bashlykov, Nikolay Bogoychev, Niladri Chatterji, Ning
+Zhang, Olivier Duchenne, Onur Çelebi, Patrick Alrassy, Pengchuan Zhang, Pengwei Li, Petar Vasic, Peter Weng,
+PrajjwalBhargava, PratikDubal, PraveenKrishnan, PunitSinghKoura, PuxinXu, QingHe, QingxiaoDong, Ragavan
+Srinivasan, Raj Ganapathy, Ramon Calderer, Ricardo Silveira Cabral, Robert Stojnic, Roberta Raileanu, Rohan
+Maheswari,RohitGirdhar,RohitPatel,RomainSauvestre,RonniePolidoro,RoshanSumbaly,RossTaylor,RuanSilva,
+Rui Hou, Rui Wang, Saghar Hosseini, Sahana Chennabasappa, Sanjay Singh, Sean Bell, Seohyun Sonia Kim, Sergey
+Edunov, Shaoliang Nie, Sharan Narang, Sharath Raparthy, Sheng Shen, Shengye Wan, Shruti Bhosale, Shun Zhang,
+Simon Vandenhende, Soumya Batra, Spencer Whitman, Sten Sootla, Stephane Collot, Suchin Gururangan, Sydney
+Borodinsky, Tamar Herman, Tara Fowler, Tarek Sheasha, Thomas Georgiou, Thomas Scialom, Tobias Speckbacher,
+Todor Mihaylov, Tong Xiao, Ujjwal Karn, Vedanuj Goswami, Vibhor Gupta, Vignesh Ramanathan, Viktor Kerkez,
+Vincent Gonguet, Virginie Do, Vish Vogeti, Vítor Albiero, Vladan Petrovic, Weiwei Chu, Wenhan Xiong, Wenyin
+Fu, Whitney Meers, Xavier Martinet, Xiaodong Wang, Xiaofang Wang, Xiaoqing Ellen Tan, Xide Xia, Xinfeng
+Xie, Xuchao Jia, Xuewei Wang, Yaelle Goldschlag, Yashesh Gaur, Yasmine Babaei, Yi Wen, Yiwen Song, Yuchen
+Zhang, Yue Li, Yuning Mao, Zacharie Delpierre Coudert, Zheng Yan, Zhengxing Chen, Zoe Papakipos, Aaditya
+18
+
+===== PAGE 19 =====
+
+Singh, Aayushi Srivastava, Abha Jain, Adam Kelsey, Adam Shajnfeld, Adithya Gangidi, Adolfo Victoria, Ahuva
+Goldstand, Ajay Menon, Ajay Sharma, Alex Boesenberg, Alexei Baevski, Allie Feinstein, Amanda Kallet, Amit
+Sangani, Amos Teo, Anam Yunus, Andrei Lupu, Andres Alvarado, Andrew Caples, Andrew Gu, Andrew Ho,
+Andrew Poulton, Andrew Ryan, Ankit Ramchandani, Annie Dong, Annie Franco, Anuj Goyal, Aparajita Saraf,
+Arkabandhu Chowdhury, Ashley Gabriel, Ashwin Bharambe, Assaf Eisenman, Azadeh Yazdan, Beau James, Ben
+Maurer, Benjamin Leonhardi, Bernie Huang, Beth Loyd, Beto De Paola, Bhargavi Paranjape, Bing Liu, Bo Wu, Boyu
+Ni, Braden Hancock, Bram Wasti, Brandon Spence, Brani Stojkovic, Brian Gamido, Britt Montalvo, Carl Parker, Carly
+Burton, CatalinaMejia, CeLiu, ChanghanWang, ChangkyuKim, ChaoZhou, ChesterHu, Ching-HsiangChu, Chris
+Cai, Chris Tindal, Christoph Feichtenhofer, Cynthia Gao, Damon Civin, Dana Beaty, Daniel Kreymer, Daniel Li,
+David Adkins, David Xu, Davide Testuggine, Delia David, Devi Parikh, Diana Liskovich, Didem Foss, Dingkang
+Wang, Duc Le, Dustin Holland, Edward Dowling, Eissa Jamil, Elaine Montgomery, Eleonora Presani, Emily Hahn,
+Emily Wood, Eric-Tuan Le, Erik Brinkman, Esteban Arcaute, Evan Dunbar, Evan Smothers, Fei Sun, Felix Kreuk,
+Feng Tian, Filippos Kokkinos, Firat Ozgenel, Francesco Caggioni, Frank Kanayet, Frank Seide, Gabriela Medina
+Florez, Gabriella Schwarz, Gada Badeer, Georgia Swee, Gil Halpern, Grant Herman, Grigory Sizov, Guangyi, Zhang,
+Guna Lakshminarayanan, Hakan Inan, Hamid Shojanazeri, Han Zou, Hannah Wang, Hanwen Zha, Haroun Habeeb,
+Harrison Rudolph, Helen Suk, Henry Aspegren, Hunter Goldman, Hongyuan Zhan, Ibrahim Damlaj, Igor Molybog,
+Igor Tufanov, Ilias Leontiadis, Irina-Elena Veliche, Itai Gat, Jake Weissman, James Geboski, James Kohli, Janice Lam,
+Japhet Asher, Jean-Baptiste Gaya, Jeff Marcus, Jeff Tang, Jennifer Chan, Jenny Zhen, Jeremy Reizenstein, Jeremy
+Teboul, Jessica Zhong, Jian Jin, Jingyi Yang, Joe Cummings, Jon Carvill, Jon Shepard, Jonathan McPhie, Jonathan
+Torres, Josh Ginsburg, Junjie Wang, Kai Wu, Kam Hou U, Karan Saxena, Kartikay Khandelwal, Katayoun Zand,
+Kathy Matosich, Kaushik Veeraraghavan, Kelly Michelena, Keqian Li, Kiran Jagadeesh, Kun Huang, Kunal Chawla,
+Kyle Huang, Lailin Chen, Lakshya Garg, Lavender A, Leandro Silva, Lee Bell, Lei Zhang, Liangpeng Guo, Licheng
+Yu, Liron Moshkovich, Luca Wehrstedt, Madian Khabsa, Manav Avalani, Manish Bhatt, Martynas Mankus, Matan
+Hasson, Matthew Lennie, Matthias Reso, Maxim Groshev, Maxim Naumov, Maya Lathi, Meghan Keneally, Miao Liu,
+Michael L. Seltzer, Michal Valko, Michelle Restrepo, Mihir Patel, Mik Vyatskov, Mikayel Samvelyan, Mike Clark,
+Mike Macey, Mike Wang, Miquel Jubert Hermoso, Mo Metanat, Mohammad Rastegari, Munish Bansal, Nandhini
+Santhanam, Natascha Parks, Natasha White, Navyata Bawa, Nayan Singhal, Nick Egebo, Nicolas Usunier, Nikhil
+Mehta,NikolayPavlovichLaptev,NingDong,NormanCheng,OlegChernoguz,OliviaHart,OmkarSalpekar,Ozlem
+Kalinli, Parkin Kent, Parth Parekh, Paul Saab, Pavan Balaji, Pedro Rittner, Philip Bontrager, Pierre Roux, Piotr Dollar,
+Polina Zvyagina, Prashant Ratanchandani, Pritish Yuvraj, Qian Liang, Rachad Alao, Rachel Rodriguez, Rafi Ayub,
+Raghotham Murthy, Raghu Nayani, Rahul Mitra, Rangaprabhu Parthasarathy, Raymond Li, Rebekkah Hogan, Robin
+Battey, Rocky Wang, Russ Howes, Ruty Rinott, Sachin Mehta, Sachin Siby, Sai Jayesh Bondu, Samyak Datta, Sara
+Chugh, Sara Hunt, Sargun Dhillon, Sasha Sidorov, Satadru Pan, Saurabh Mahajan, Saurabh Verma, Seĳi Yamamoto,
+Sharadh Ramaswamy, Shaun Lindsay, Shaun Lindsay, Sheng Feng, Shenghao Lin, Shengxin Cindy Zha, Shishir Patil,
+Shiva Shankar, Shuqiang Zhang, Shuqiang Zhang, Sinong Wang, Sneha Agarwal, Soji Sajuyigbe, Soumith Chintala,
+Stephanie Max, Stephen Chen, Steve Kehoe, Steve Satterfield, Sudarshan Govindaprasad, Sumit Gupta, Summer
+Deng, Sungmin Cho, Sunny Virk, Suraj Subramanian, Sy Choudhury, Sydney Goldman, Tal Remez, Tamar Glaser,
+Tamara Best, Thilo Koehler, Thomas Robinson, Tianhe Li, Tianjun Zhang, Tim Matthews, Timothy Chou, Tzook
+Shaked, Varun Vontimitta, Victoria Ajayi, Victoria Montanez, Vĳai Mohan, Vinay Satish Kumar, Vishal Mangla,
+Vlad Ionescu, Vlad Poenaru, Vlad Tiberiu Mihailescu, Vladimir Ivanov, Wei Li, Wenchen Wang, Wenwen Jiang,
+Wes Bouaziz, Will Constable, Xiaocheng Tang, Xiaojian Wu, Xiaolan Wang, Xilun Wu, Xinbo Gao, Yaniv Kleinman,
+Yanjun Chen, Ye Hu, Ye Jia, Ye Qi, Yenda Li, Yilin Zhang, Ying Zhang, Yossi Adi, Youngjin Nam, Yu, Wang, Yu Zhao,
+Yuchen Hao, Yundi Qian, Yunlu Li, Yuzi He, Zach Rait, Zachary DeVito, Zef Rosnbrick, Zhaoduo Wen, Zhenyu
+Yang, Zhiwei Zhao, and Zhiyu Ma. The llama 3 herd of models, 2024. URLhttps://arxiv.org/abs/2407.21783.
+[17] Dan Hendrycks, Collin Burns, Steven Basart, Andy Zou, Mantas Mazeika, Dawn Song, and Jacob Steinhardt.
+Measuring massive multitask language understanding.arXivpreprint arXiv:2009.03300, 2020.
+[18] Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. Distilling the knowledge in a neural network, 2015. URLhttps:
+//arxiv.org/abs/1503.02531.
+[19] HuggingFace. nanotron.https://github.com/huggingface/nanotron, 2024. Pretraining models made easy.
+[20] Benoit Jacob, Skirmantas Kligys, Bo Chen, Menglong Zhu, Matthew Tang, Andrew Howard, Hartwig Adam, and
+Dmitry Kalenichenko. Quantization and training of neural networks for efficient integer-arithmetic-only inference,
+2017. URLhttps://arxiv.org/abs/1712.05877.
+19
+
+===== PAGE 20 =====
+
+[21] Dohyeong Kim, Myeongjun Jang, Deuk Sin Kwon, and Eric Davis. Kobest: Korean balanced evaluation of significant
+tasks, 2022. URLhttps://arxiv.org/abs/2204.04541.
+[22] Eunsu Kim, Juyoung Suk, Philhoon Oh, Haneul Yoo, James Thorne, and Alice Oh. Click: A benchmark dataset of
+cultural and linguistic intelligence in korean, 2024. URLhttps://arxiv.org/abs/2403.06412.
+[23] Minjun Kim, Hyeonseok Lim, Hangyeol Yoo, Inho Won, Seungwoo Song, Minkyung Cho, Junhun Yuk, Changsu
+Choi, Dongjae Shin, Huige Lee, Hoyun Song, Alice Oh, and Kyungtae Lim. Kormo: Korean open reasoning model
+for everyone, 2025. URLhttps://arxiv.org/abs/2510.09426.
+[24] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph E. Gonzalez, Hao
+Zhang, and Ion Stoica. Efficient memory management for large language model serving with pagedattention, 2023.
+URLhttps://arxiv.org/abs/2309.06180.
+[25] Ji Lin, Jiaming Tang, Haotian Tang, Shang Yang, Wei-Ming Chen, Wei-Chen Wang, Guangxuan Xiao, Xingyu Dang,
+Chuang Gan, and Song Han. Awq: Activation-aware weight quantization for llm compression and acceleration,
+2026. URLhttps://arxiv.org/abs/2306.00978.
+[26] Ilya Loshchilov and Frank Hutter. Decoupled weight decay regularization.arXiv preprintarXiv:1711.05101, 2017.
+[27] NVIDIA. NVIDIAH200tensorcoreGPU,2024. URL https://www.nvidia.com/ko-kr/data-center/h200/. Accessed:
+2024-11-19.
+[28] NVIDIA, :, Aaron Blakeman, Aarti Basant, Abhinav Khattar, Adithya Renduchintala, Akhiad Bercovich, Aleksander
+Ficek, Alexis Bjorlin, Ali Taghibakhshi, Amala Sanjay Deshmukh, Ameya Sunil Mahabaleshwarkar, Andrew Tao,
+AnnaShors,AshwathAithal,AshwinPoojary,AyushDattagupta,BalaramBuddharaju,BobbyChen,BorisGinsburg,
+Boxin Wang, Brandon Norick, Brian Butterfield, Bryan Catanzaro, Carlo del Mundo, Chengyu Dong, Christine
+Harvey, Christopher Parisien, Dan Su, Daniel Korzekwa, Danny Yin, Daria Gitman, David Mosallanezhad, Deepak
+Narayanan, Denys Fridman, Dima Rekesh, Ding Ma, Dmytro Pykhtar, Dong Ahn, Duncan Riach, Dusan Stosic,
+Eileen Long, Elad Segal, Ellie Evans, Eric Chung, Erick Galinkin, Evelina Bakhturina, Ewa Dobrowolska, Fei Jia,
+Fuxiao Liu, Gargi Prasad, Gerald Shen, Guilin Liu, Guo Chen, Haifeng Qian, Helen Ngo, Hongbin Liu, Hui Li, Igor
+Gitman, Ilia Karmanov, Ivan Moshkov, Izik Golan, Jan Kautz, Jane Polak Scowcroft, Jared Casper, Jarno Seppanen,
+Jason Lu, Jason Sewall, Jiaqi Zeng, Jiaxuan You, Jimmy Zhang, Jing Zhang, Jining Huang, Jinze Xue, Jocelyn Huang,
+Joey Conway, John Kamalu, Jon Barker, Jonathan Cohen, Joseph Jennings, Jupinder Parmar, Karan Sapra, Kari
+Briski, Kateryna Chumachenko, Katherine Luna, Keshav Santhanam, Kezhi Kong, Kirthi Sivamani, Krzysztof
+Pawelec, Kumar Anik, Kunlun Li, Lawrence McAfee, Leon Derczynski, Lindsey Pavao, Luis Vega, Lukas Voegtle,
+Maciej Bala, Maer Rodrigues de Melo, Makesh Narsimhan Sreedhar, Marcin Chochowski, Markus Kliegl, Marta
+Stepniewska-Dziubinska,MatthieuLe,MatveiNovikov,MehrzadSamadi,MichaelAndersch,MichaelEvans,Miguel
+Martinez, Mike Chrzanowski, Mike Ranzinger, Mikolaj Blaz, Misha Smelyanskiy, Mohamed Fawzy, Mohammad
+Shoeybi,MostofaPatwary,NayeonLee,NimaTajbakhsh,NingXu,OlegRybakov,OleksiiKuchaiev,OlivierDelalleau,
+Osvald Nitski, Parth Chadha, Pasha Shamis, Paulius Micikevicius, Pavlo Molchanov, Peter Dykas, Philipp Fischer,
+Pierre-Yves Aquilanti, Piotr Bialecki, Prasoon Varshney, Pritam Gundecha, Przemek Tredak, Rabeeh Karimi, Rahul
+Kandu, Ran El-Yaniv, Raviraj Joshi, Roger Waleffe, Ruoxi Zhang, Sabrina Kavanaugh, Sahil Jain, Samuel Kriman,
+Sangkug Lym, Sanjeev Satheesh, Saurav Muralidharan, Sean Narenthiran, Selvaraj Anandaraj, Seonmyeong Bak,
+Sergey Kashirsky, Seungju Han, Shantanu Acharya, Shaona Ghosh, Sharath Turuvekere Sreenivas, Sharon Clay,
+Shelby Thomas, Shrimai Prabhumoye, Shubham Pachori, Shubham Toshniwal, Shyamala Prayaga, Siddhartha
+Jain, Sirshak Das, Slawek Kierat, Somshubra Majumdar, Song Han, Soumye Singhal, Sriharsha Niverty, Stefania
+Alborghetti, Suseella Panguluri, Swetha Bhendigeri, Syeda Nahida Akter, Szymon Migacz, Tal Shiri, Terry Kong,
+Timo Roman, Tomer Ronen, Trisha Saar, Tugrul Konuk, Tuomas Rintamaki, Tyler Poon, Ushnish De, Vahid Noroozi,
+Varun Singh, Vĳay Korthikanti, Vitaly Kurin, Wasi Uddin Ahmad, Wei Du, Wei Ping, Wenliang Dai, Wonmin Byeon,
+Xiaowei Ren, Yao Xu, Yejin Choi, Yian Zhang, Ying Lin, Yoshi Suhara, Zhiding Yu, Zhiqi Li, Zhiyu Li, Zhongbo Zhu,
+Zhuolin Yang, and Zĳia Chen. Nemotron-h: A family of accurate and efficient hybrid mamba-transformer models,
+2025. URLhttps://arxiv.org/abs/2504.03624.
+[29] Qualcomm. Qualcomm ai engine direct. https://www.qualcomm.com/developer/software/
+qualcomm-ai-engine-direct-sdk.
+[30] David Rein, Betty Li Hou, Asa Cooper Stickland, Jackson Petty, Richard Yuanzhe Pang, Julien Dirani, Julian Michael,
+and Samuel R Bowman. GPQA: A graduate-level google-proof q&a benchmark.arXivpreprintarXiv:2311.12022,
+2023.
+20
+
+===== PAGE 21 =====
+
+[31] Keisuke Sakaguchi, Ronan Le Bras, Chandra Bhagavatula, and Yejin Choi. Winogrande: An adversarial winograd
+schema challenge at scale, 2019. URLhttps://arxiv.org/abs/1907.10641.
+[32] Rico Sennrich, Barry Haddow, and Alexandra Birch. Neural machine translation of rare words with subword units,
+2016. URLhttps://arxiv.org/abs/1508.07909.
+[33] Noam Shazeer. Glu variants improve transformer, 2020. URLhttps://arxiv.org/abs/2002.05202.
+[34] Guĳin Son, Hanwool Lee, Sungdong Kim, Seungone Kim, Niklas Muennighoff, Taekyoon Choi, Cheonbok Park,
+Kang Min Yoo, and Stella Biderman. Kmmlu: Measuring massive multitask language understanding in korean,
+2024. URLhttps://arxiv.org/abs/2402.11548.
+[35] Guĳin Son, Hanwool Lee, Suwan Kim, Huiseo Kim, Jaecheol Lee, Je Won Yeom, Jihyu Jung, Jung Woo Kim,
+and Songseong Kim. Hae-rae bench: Evaluation of korean knowledge in language models, 2024. URLhttps:
+//arxiv.org/abs/2309.02706.
+[36] STMicroelectronics. Stm neural network deployment framework.https://stm32ai.st.com/stm32-cube-ai/.
+[37] Jianlin Su, Yu Lu, Shengfeng Pan, Ahmed Murtadha, Bo Wen, and Yunfeng Liu. Roformer: Enhanced transformer
+with rotary position embedding, 2023. URLhttps://arxiv.org/abs/2104.09864.
+[38] GemmaTeam,AishwaryaKamath,JohanFerret,ShreyaPathak,NinoVieillard,RamonaMerhej,SarahPerrin,Tatiana
+Matejovicova, Alexandre Ramé, Morgane Rivière, Louis Rouillard, Thomas Mesnard, Geoffrey Cideron, Jean bastien
+Grill, SabelaRamos, EdouardYvinec, MichelleCasbon, EtiennePot, IvoPenchev, GaëlLiu, FrancescoVisin, Kathleen
+Kenealy, Lucas Beyer, Xiaohai Zhai, Anton Tsitsulin, Robert Busa-Fekete, Alex Feng, Noveen Sachdeva, Benjamin
+Coleman, Yi Gao, Basil Mustafa, Iain Barr, Emilio Parisotto, David Tian, Matan Eyal, Colin Cherry, Jan-Thorsten
+Peter, Danila Sinopalnikov, Surya Bhupatiraju, Rishabh Agarwal, Mehran Kazemi, Dan Malkin, Ravin Kumar,
+David Vilar, Idan Brusilovsky, Jiaming Luo, Andreas Steiner, Abe Friesen, Abhanshu Sharma, Abheesht Sharma,
+Adi Mayrav Gilady, Adrian Goedeckemeyer, Alaa Saade, Alex Feng, Alexander Kolesnikov, Alexei Bendebury, Alvin
+Abdagic, Amit Vadi, András György, André Susano Pinto, Anil Das, Ankur Bapna, Antoine Miech, Antoine Yang,
+Antonia Paterson, Ashish Shenoy, Ayan Chakrabarti, Bilal Piot, Bo Wu, Bobak Shahriari, Bryce Petrini, Charlie Chen,
+Charline Le Lan, Christopher A. Choquette-Choo, CJ Carey, Cormac Brick, Daniel Deutsch, Danielle Eisenbud, Dee
+Cattle, Derek Cheng, Dimitris Paparas, Divyashree Shivakumar Sreepathihalli, Doug Reid, Dustin Tran, Dustin
+Zelle, Eric Noland, Erwin Huizenga, Eugene Kharitonov, Frederick Liu, Gagik Amirkhanyan, Glenn Cameron, Hadi
+Hashemi, Hanna Klimczak-Plucińska, Harman Singh, Harsh Mehta, Harshal Tushar Lehri, Hussein Hazimeh, Ian
+Ballantyne, Idan Szpektor, Ivan Nardini, Jean Pouget-Abadie, Jetha Chan, Joe Stanton, John Wieting, Jonathan Lai,
+Jordi Orbay, Joseph Fernandez, Josh Newlan, Ju yeong Ji, Jyotinder Singh, Kat Black, Kathy Yu, Kevin Hui, Kiran
+Vodrahalli, Klaus Greff, Linhai Qiu, Marcella Valentine, Marina Coelho, Marvin Ritter, Matt Hoffman, Matthew
+Watson, Mayank Chaturvedi, Michael Moynihan, Min Ma, Nabila Babar, Natasha Noy, Nathan Byrd, Nick Roy,
+Nikola Momchev, Nilay Chauhan, Noveen Sachdeva, Oskar Bunyan, Pankil Botarda, Paul Caron, Paul Kishan
+Rubenstein, Phil Culliton, Philipp Schmid, Pier Giuseppe Sessa, Pingmei Xu, Piotr Stanczyk, Pouya Tafti, Rakesh
+Shivanna, Renjie Wu, Renke Pan, Reza Rokni, Rob Willoughby, Rohith Vallu, Ryan Mullins, Sammy Jerome, Sara
+Smoot, Sertan Girgin, Shariq Iqbal, Shashir Reddy, Shruti Sheth, Siim Põder, Sĳal Bhatnagar, Sindhu Raghuram
+Panyam, Sivan Eiger, Susan Zhang, Tianqi Liu, Trevor Yacovone, Tyler Liechty, Uday Kalra, Utku Evci, Vedant
+Misra, Vincent Roseberry, Vlad Feinberg, Vlad Kolesnikov, Woohyun Han, Woosuk Kwon, Xi Chen, Yinlam Chow,
+Yuvein Zhu, Zichuan Wei, Zoltan Egyed, Victor Cotruta, Minh Giang, Phoebe Kirk, Anand Rao, Kat Black, Nabila
+Babar, Jessica Lo, Erica Moreira, Luiz Gustavo Martins, Omar Sanseviero, Lucas Gonzalez, Zach Gleicher, Tris
+Warkentin, Vahab Mirrokni, Evan Senter, Eli Collins, Joelle Barral, Zoubin Ghahramani, Raia Hadsell, Yossi Matias,
+D. Sculley, Slav Petrov, Noah Fiedel, Noam Shazeer, Oriol Vinyals, Jeff Dean, Demis Hassabis, Koray Kavukcuoglu,
+Clement Farabet, Elena Buchatskaya, Jean-Baptiste Alayrac, Rohan Anil, Dmitry, Lepikhin, Sebastian Borgeaud,
+Olivier Bachem, Armand Joulin, Alek Andreev, Cassidy Hardin, Robert Dadashi, and Léonard Hussenot. Gemma 3
+technical report, 2025. URLhttps://arxiv.org/abs/2503.19786.
+[39] Kimi Team, Yu Zhang, Zongyu Lin, Xingcheng Yao, Jiaxi Hu, Fanqing Meng, Chengyin Liu, Xin Men, Songlin
+Yang, Zhiyuan Li, Wentao Li, Enzhe Lu, Weizhou Liu, Yanru Chen, Weixin Xu, Longhui Yu, Yejie Wang, Yu Fan,
+Longguang Zhong, Enming Yuan, Dehao Zhang, Yizhi Zhang, T. Y. Liu, Haiming Wang, Shengjun Fang, Weiran He,
+Shaowei Liu, Yiwei Li, Jianlin Su, Jiezhong Qiu, Bo Pang, Junjie Yan, Zhejun Jiang, Weixiao Huang, Bohong Yin,
+Jiacheng You, Chu Wei, Zhengtao Wang, Chao Hong, Yutian Chen, Guanduo Chen, Yucheng Wang, Huabin Zheng,
+Feng Wang, Yibo Liu, Mengnan Dong, Zheng Zhang, Siyuan Pan, Wenhao Wu, Yuhao Wu, Longyu Guan, Jiawen
+21
+
+===== PAGE 22 =====
+
+Tao, Guohong Fu, Xinran Xu, Yuzhi Wang, Guokun Lai, Yuxin Wu, Xinyu Zhou, Zhilin Yang, and Yulun Du. Kimi
+linear: An expressive, efficient attention architecture, 2025. URLhttps://arxiv.org/abs/2510.26692.
+[40] Roger Waleffe, Wonmin Byeon, Duncan Riach, Brandon Norick, Vĳay Korthikanti, Tri Dao, Albert Gu, Ali
+Hatamizadeh, Sudhakar Singh, Deepak Narayanan, Garvit Kulshreshtha, Vartika Singh, Jared Casper, Jan Kautz,
+Mohammad Shoeybi, and Bryan Catanzaro. An empirical study of mamba-based language models, 2024. URL
+https://arxiv.org/abs/2406.07887.
+[41] Yubo Wang, Xueguang Ma, Ge Zhang, Yuansheng Ni, Abhranil Chandra, Shiguang Guo, Weiming Ren, Aaran
+Arulraj, Xuan He, Ziyan Jiang, Tianle Li, Max Ku, Kai Wang, Alex Zhuang, Rongqi Fan, Xiang Yue, and Wenhu Chen.
+Mmlu-pro: A more robust and challenging multi-task language understanding benchmark.CoRR, abs/2406.01574,
+2024. URLhttps://doi.org/10.48550/arXiv.2406.01574.
+[42] Thomas Wolf, Lysandre Debut, Victor Sanh, Julien Chaumond, Clement Delangue, Anthony Moi, Pierric Cistac, Tim
+Rault,RémiLouf,MorganFuntowicz,JoeDavison,SamShleifer,PatrickvonPlaten,ClaraMa,YacineJernite,JulienPlu,
+CanwenXu,TevenLeScao,SylvainGugger,MariamaDrame,QuentinLhoest,andAlexanderM.Rush. Huggingface’s
+transformers: State-of-the-art natural language processing, 2020. URLhttps://arxiv.org/abs/1910.03771.
+[43] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen
+Huang, Chenxu Lv, Chujie Zheng, Dayiheng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge, Haoran Wei, Huan Lin,
+Jialong Tang, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jing Zhou, Jingren Zhou, Junyang Lin,
+Kai Dang, Keqin Bao, Kexin Yang, Le Yu, Lianghao Deng, Mei Li, Mingfeng Xue, Mingze Li, Pei Zhang, Peng Wang,
+Qin Zhu, Rui Men, Ruize Gao, Shixuan Liu, Shuang Luo, Tianhao Li, Tianyi Tang, Wenbiao Yin, Xingzhang Ren,
+Xinyu Wang, Xinyu Zhang, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yinger Zhang, Yu Wan, Yuqiong
+Liu, Zekun Wang, Zeyu Cui, Zhenru Zhang, Zhipeng Zhou, and Zihan Qiu. Qwen3 technical report, 2025. URL
+https://arxiv.org/abs/2505.09388.
+[44] Songlin Yang, Jan Kautz, and Ali Hatamizadeh. Gated delta networks: Improving mamba2 with delta rule, 2025.
+URLhttps://arxiv.org/abs/2412.06464.
+[45] Rowan Zellers, Ari Holtzman, Yonatan Bisk, Ali Farhadi, and Yejin Choi. HellaSwag: Can a machine really finish
+yoursentence? InAnnaKorhonen,DavidR.Traum,andLluísMàrquez,editors, Proceedingsofthe57thConference
+of the Association for Computational Linguistics, ACL 2019, Florence, Italy, July 28- August 2, 2019, Volume 1:
+Long Papers, pages 4791–4800. Association for Computational Linguistics, 2019. doi: 10.18653/v1/p19-1472. URL
+https://doi.org/10.18653/v1/p19-1472.
+We would like to thank Seongbae Lee, Seongjae Park, and Jinwoo Lee of the OptAI Model Optimization Team for helping bring this
+research to a successful completion. We also remember the Marcus Building as our own garage, the place where this journey began.
+22

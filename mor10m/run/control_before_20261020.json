@@ -1,0 +1,21 @@
+{
+  "pid": 4557,
+  "started_at": 1788514110.864407,
+  "phase": "training",
+  "error": null,
+  "updated_at": 1788521485.412776,
+  "dashboard_pid": 5398,
+  "source_published": true,
+  "source_fingerprint": "91303818de16f659a49fa094ccd30bb9cc57a0315b8da26a45e834af3803bd31",
+  "prep_submitted": true,
+  "gpu_hours_remaining": 4.41,
+  "quota_refresh": "2026-09-05T00:00:00",
+  "smoke_submitted": true,
+  "kernel_status": "hardikarora83i2492/mor-10m-token-choice-1b has status \"KernelWorkerStatus.RUNNING\"",
+  "benchmark_tokens_per_second": 32292.872767063116,
+  "estimated_training_hours": 8.601829257541162,
+  "submitted_target": 200000000,
+  "tokens": 100007936,
+  "latest_checkpoint": "/Users/hardikarora/Desktop/MAIN/research/mor10m/run/downloads/100000000/result/checkpoints/checkpoint_0100007936",
+  "published_resume_tokens": 100007936
+}

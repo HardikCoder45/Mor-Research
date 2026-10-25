@@ -1,0 +1,24 @@
+{
+  "architecture_version": "pilot-v1-2026-08-30",
+  "attention_layers": [
+    0,
+    1,
+    3,
+    5,
+    7,
+    9,
+    11
+  ],
+  "d_ff": 2640,
+  "d_model": 640,
+  "head_dim": 64,
+  "max_seq_len": 8192,
+  "model_name": "FlashSkip-100M",
+  "n_kv_heads": 2,
+  "n_layers": 12,
+  "n_q_heads": 10,
+  "rms_eps": 1e-06,
+  "rope_theta": 1000000.0,
+  "tie_embeddings": true,
+  "vocab_size": 49152
+}

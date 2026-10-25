@@ -1,0 +1,2577 @@
+
+
+===== PAGE 1 =====
+
+2025-3-3
+Relaxed Recursive Transformers:
+Effective Parameter Sharing with Layer-wise LoRA
+Sangmin Bae1,*, Adam Fisch2, Hrayr Harutyunyan3, Ziwei Ji3, Seungyeon Kim2 and Tal Schuster2,†
+1KAIST AI,2Google DeepMind,3Google Research,*Work done during an internship at Google DeepMind,†Corresponding Author
+Large language models (LLMs) are expensive to deploy. Parameter sharing offers a possible path towards
+reducing their size and cost, but its effectiveness in modern LLMs remains fairly limited. In this work,
+we revisit “layer tying” as form of parameter sharing in Transformers, and introduce novel methods for
+convertingexistingLLMsintosmaller“RecursiveTransformers”thatshareparametersacrosslayers, with
+minimal loss of performance. Here, our Recursive Transformers are efficiently initialized from standard
+pretrained Transformers, but only use a single block of unique layers that is then repeated multiple
+times in a loop. We further improve performance by introducing Relaxed Recursive Transformers that
+add flexibility to the layer tying constraint via depth-wise low-rank adaptation (LoRA) modules, yet
+still preserve the compactness of the overall model. We show that our recursive models (e.g., recursive
+Gemma 1B) outperform both similar-sized vanilla pretrained models (such as TinyLlama 1.1B and
+Pythia 1B) and knowledge distillation baselines—and can even recover most of the performance of the
+original “full-size” model (e.g., Gemma 2B with no shared parameters). Finally, we propose Continuous
+Depth-wise Batching, a promising new inference paradigm enabled by the Recursive Transformer when
+paired with early exiting. In a theoretical analysis, we show that this has the potential to lead to
+significant (2-3×) gains in inference throughput.
+1. Introduction
+Efficient deployment of large language models (LLMs) demands a balance between performance
+and resources (Leviathan et al., 2023; Raposo et al., 2024; Rivière et al., 2024; Wan et al., 2024;
+Zhou et al., 2024). While larger models with more parameters consistently demonstrate superior
+performance(Hoffmannetal.,2022;Raeetal.,2021;Rosenfeldetal.,2020), theirsubstantialmemory
+and computational demands are expensive (Pope et al., 2023). Parameter sharing approaches (e.g.
+Dehghani et al., 2019; Lan et al., 2020; Takase and Kiyono, 2023; Xia et al., 2019), wherein weights
+are reused across model layers, can lower these costs by reducing memory footprint, and thereby
+allow for the use of fewer (or lower-grade) accelerators, or larger batch sizes for better throughput.
+While parameter sharing has shown encouraging capabilities in previous work (Giannou et al., 2023;
+Lan et al., 2020), its application to modern LLMs has yielded limited reported success.
+In this work, we revisit parameter sharing for LLMs, and propose novel methodologies toconvert
+existing, unshared models into smaller, and more efficient, Recursive Transformers. These models use
+a single block of unique layers that are recursively reused across multiple loops, yet still achieve im-
+pressive performance relative to their reduced size. To mitigate the potential performance degradation
+associated with parameter sharing, we first initialize the shared block of layers based on the original
+model’s pre-trained parameters, and then finetune the resulting recursive model for a limited number
+of “uptraining” steps. Importantly, we show that our initialization strategies allow us to achieve strong
+performance with minimal training time. This is aligned with observations that model compression
+techniques such as layer skipping (Elhoushi et al., 2024; Fan et al., 2020; Zeng et al., 2023; Zhang
+et al., 2024a), pruning (Frankle and Carbin, 2019; Ramanujan et al., 2020) or nesting (Devvrit et al.,
+2023) can preserve surprisingly high performance—further motivating our approach of compressing
+models to more compact yet performant architectures (here, repeated layers with low-rank adapters).
+Correspondence to: bsmn0223@kaist.ac.kr, talschuster@google.com
+© 2025 Google DeepMind. All rights reserved
+arXiv:2410.20672v3  [cs.CL]  28 Feb 2025
+
+===== PAGE 2 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Layer 1Layer 2Layer 3
+Layer N
+Layer 1Layer 2
+Layer K⋮ ⋮
+Layer 1Layer 2
+Layer K⋮
+Vanilla TransformerRecursive TransformerRelaxed Recursive Transformer
+×(N/K)
+⋮⋮ ⋮(1)(2)(N/K)
+×(N/K)
+Figure 1 | Overview of the conversion from a vanillaN-layer Transformer to a Recursive Transformer
+with 𝑁/𝐾 blocks ofK shared layers. The Recursive Transformer is obtained by repeating a single
+block ofK layers multiple times, resulting in a looped architecture. The Recursive Transformer can
+also be converted into a Relaxed Recursive Transformer by adding layer-specific LoRA modules. This
+preserves many of the advantages of weight sharing, but also allows for better performance.
+As depicted in Figure1, we further propose the Relaxed Recursive Transformer, an extension of
+the Recursive Transformer in which the weight tying across repeated layer blocks is slightly relaxed
+through the incorporation of multiple layer-specific, low-rank adaptation(LoRA) modules (Hu et al.,
+2022). Despite its simplicity, this strategy offers several non-trivial advantages. First, it allows for low-
+rank deltas between shared layers, while only adding minimal overhead. Second, the rank of the LoRA
+matrices can be adjusted to control the degree of relaxation, which directly influences model capacity.
+Furthermore, since the relaxed model has the same overall shape as the original Transformer, we can
+efficiently initialize LoRA modules via truncated Singular Value Decomposition (Hansen, 1987) on the
+residual matrices between the original layer weights and the shared layer weights. Hence, the rank
+values serve as a pivotal hyperparameter, enabling the Relaxed Recursive Transformer to seamlessly
+transition between the two extremes of the vanilla and Recursive Transformer architectures.
+While the primary focus of this paper lies in how to formulate and train Recursive Transformers,
+we also highlight their potential to achieve significant throughput gains via a new batched inference
+paradigm, Continuous Depth-wise Batching, that their recursive nature enables. Prior work introduced
+continuous sequence-wise batching (Kwon et al., 2023; Yu et al., 2022), which leverages the fact that
+the computation performed to compute a new token is functionally the same (and uses the same model
+parameters) regardless of the token position within the sequence. This allows new requests to be
+continuously scheduled when slots within a batch become available. For example, when one response
+is completed, the start of the next response to be formed can immediately take the finished response’s
+place in the batch, without waiting for the rest of the batch responses that might be longer. In our
+Recursive Transformer, parameter sharing occurs not only across different timesteps, but also across
+different depths (loop iterations). This enables an extra dimension of dynamic grouping: jointly com-
+puting different iterations of the looped layer blocks per individual responses within the same batch.
+Our key contributions are as follows:
+• We introduce a framework for initializing and training Relaxed Recursive Transformers and demon-
+strate strong performance compared to non-recursive models of comparable size. For example,
+when we uptrained a recursive Gemma 1B model converted from a pretrained Gemma 2B (Team
+et al., 2024), we observed up to 13.5 absolute accuracy improvement (22% error reduction) on
+few-shot tasks compared to a non-recursive Gemma 1B model (pretrained from scratch). Further-
+more, we show that by incorporating knowledge distillation (Hinton et al., 2015; Kim and Rush,
+2016), our recursive Gemma model, uptrained on 60 billion tokens, achieves performance on par
+with the full-size Gemma model trained on a massive 3 trillion token corpus (see §3.3 for details).
+2
+
+===== PAGE 3 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+• Based on our Relaxed Recursive Transformer, we also evaluate a key use case for continuous
+depth-wise batching with early-exiting (Bae et al., 2023; Elbayad et al., 2020; Graves, 2016a;
+Schuster et al., 2022), which opportunistically makes predictions for samples with high confidence
+at earlier stages. From our simulation, Early Exits reveal a substantial throughput improvement
+of up to 2-3× compared to a vanilla Transformer with the same architecture. Notably, the recursive
+Gemma model, which outperforms the vanilla Pythia model, can theoretically achieve a nearly 4×
+increase in throughput (see §3.8 for details).
+2. Effective Model Compression with Recursive Patterns
+In this section, we present the main details of our method for converting a vanilla Transformer model
+into a parameter-shared model that outperforms models of equivalent size. We first provide a short
+overview of the Transformer architecture (§2.1). Then, we introduce the Recursive Transformer and
+present effective techniques to initialize its looped layers by leveraging the weights of the original
+pretrained model (§2.2). In §2.3, we relax the parameter-sharing constraint in the model design,
+and add a limited set of layer-specific parameters to further improve the model’s accuracy while
+maintaining compact representations. Finally, we show how, beyond reduced memory, Recursive
+Transformers readily support further throughput optimizations via a novel inference paradigm (§2.4).
+2.1. Basic Transformer Architecture
+Large language models (Dubey et al., 2024; OpenAI, 2023; Reid et al., 2024; Rivière et al., 2024)
+typically leverage the Transformer architecture (Vaswani et al., 2017). A Transformer consists ofL
+layers,wherethehiddenstatesateachtimestep tarecomputedbyrunningthroughtheseriesoflayers:
+hℓ
+𝑡 = 𝑓 (hℓ−1
+𝑡 ; Φℓ), ℓ ∈ [ 1, 𝐿], (1)
+with h0
+𝑡 representing the embedding of the token𝑦𝑡−1 from the previous time step, andΦℓ denoting
+the trainable parameters of theℓ-th layer.
+Each layer has two core components: a multi-head attention (MHA) mechanism and a feed-
+forward network (FFN). MHA employs multiple attention heads to capture diverse relationships
+within the input sequence via linear attention weights and scaled dot-product attention mechanisms.
+The FFN structure typically consists of two linear transformations, but different models exhibits
+distinct structural variations. See AppendixA for further details.
+2.2. Recursive Transformer: Looped Layer Tying
+In this work, we revisit parameter sharing in the context of LLMs and propose the Recursive Trans-
+former architecture. Among various looping strategies (refer to AppendixB), we specifically adopt
+the CYCLE strategy (Takase and Kiyono, 2023) for Recursive Transformers, wherein a single block
+of unique layers is recursively reused. This inherent design aligns seamlessly with early-exiting
+mechanisms, potentially offering substantial speedup. The model’s hidden states are computed as:
+hℓ
+𝑡 = 𝑓 (hℓ−1
+𝑡 ; Φ′
+( (ℓ−1) mod 𝐿/𝐵)+1), ℓ ∈ [ 1, 𝐿], (2)
+wheretheparameter-sharedmodelisparameterizedby Φ′, andBdenotesthenumberofloopingblocks
+(we restrictB to be a factor ofL). For example, Gemma 2B (Team et al., 2024) with 18 layers can be
+converted to a recursive variant with 2 blocks by storing weights for only the first 9 layers. The forward
+passwilllooptwicethroughthese9layers. Wetiealltrainableparameters, includingtheweightsofthe
+linear layers in the Transformer blocks and the weights of the RMSNorm (Zhang and Sennrich, 2019).
+3
+
+===== PAGE 4 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+T-SVD (Layer 1–Layer1,4)= (U𝒓𝚺𝒓)(V𝒓𝑻) = BALayer 1Layer 2Layer 3Layer 4Layer 5Layer 6
+Layer 1Layer 3Layer 6
+×2
+Layer 1, 4
+Layer 2, 5
+Layer 3, 6
+×2
+Layer 1Layer 2Layer 3
+×2
+Layer 1, 4
+Layer 2, 5
+Layer 3, 6×2
+StepwiseAverageLowerBA
+Figure 2 | Left: An example of unshared, full-size model with 6 layers.Middle: Three proposed
+methodologies for initializing looped layers in a Recursive Transformer. Each layer number indicates
+the source layer in the full-size model used for initialization.Right: Example of a Relaxed Recursive
+Transformer initialized by SVD method. Here, looped layers are initialized using the Average method.
+Initialization techniques for looped layersTo mitigate the potential performance drop associated
+with reduced capacity in parameter-shared models, we propose several novel initialization method-
+ologies to facilitate effective knowledge transfer from unshared, pretrained models to Recursive
+Transformers. Figure 2 illustrates three such techniques. The Stepwise method selects intermediate
+layers at specific intervals while keeping the first and last layer fixed. This is motivated by prior
+work (Fan et al., 2020; Liu et al., 2023; Zeng et al., 2023; Zhang et al., 2024a) showing minimal
+impact on generation quality when skipping a few layers in LLMs. The Average method initializes the
+shared weights among tied layers by averaging their weight matrices, whereas the Lower method
+directly uses weights from the firstK layers of the unshared model. We conducted a brief uptraining
+on 15 billion tokens to investigate the extent of performance recovery in these initialized models
+(§3.4) and found the Stepwise approach to perform best for Recursive Transformers. However, we
+found the Average method to perform best for Relaxed Recursive Transformers, discussed next.
+2.3. Relaxed Recursive Transformer: Multi-LoRA Layers
+Whilefulllayer-tyingiseffectiveforcompressingthemodel’ssizewhilemaintainingstrongcapabilities,
+it has two noticeable limitations: (1) the set of possible model sizes is limited to scaling the number
+of layers, and (2) each model layer ends up having to serve multiple roles associated with different
+depths of the model. To address this, we introduce Relaxed Recursive Transformers in which we
+incorporate independent adapter modules (Houlsby et al., 2019; Hu et al., 2022) for each layer,
+relaxing the strict parameter sharing. While we experiment with various approaches like layer-specific
+prefixes (Liu et al., 2021) (see AppendixH), we find low-rank adaptation (LoRA) modules (Hu et al.,
+2022) to efficiently capture the subtle variations between tied layers. Specifically, we modify Eq.2 to:
+hℓ
+𝑡 = 𝑓 (hℓ−1
+𝑡 ; Φ′
+( (ℓ−1) mod 𝐿/𝐵)+1, ΔΦ′
+ℓ), ℓ ∈ [ 1, 𝐿], (3)
+where ΔΦ′ is the (small) set of parameters for the LoRA modules.
+In this relaxed model, each looped layer is augmented with multiple LoRA modules. For example,
+a recursive model with two loop iterations has a single block of shared layers, and two different LoRA
+modules are attached to each layer within this block. The first and second LoRA modules per layer
+are used during the first and second loop iterations, respectively. Functionally, these LoRA modules
+introduce low-rank deltas to all of the shared, linear weight matrices. More concretely, for a base
+transformation h = W′x, our modified forward pass yieldsh = W′x + ΔW′x = W′x + BAx, where
+A ∈ ℝ(𝑟×𝑘) and B ∈ ℝ(𝑑×𝑟) denote the weight matrices of LoRA with rankr.
+4
+
+===== PAGE 5 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Model Stage1616
+161632323232
+8888
+123123456789Time Step
+Input Stream
+(a) Vanilla Batching
+1616
+1616328
+123456789Time Step
+161616
+161616
+888 (b) Depth-wise Batching
+168
+1616328
+123456789Time Step
+16168
+88888888888 (c) With Early-exiting
+Figure 3 | An illustrative example of a continuous depth-wise batching strategy together with early-
+exiting. We assume a maximum batch size of32, three model “stages” (e.g., layer blocks), and a
+stream of batched inputs that arrive sequentially in time. In(a), all three model stages must complete
+for the first (non-maximal) batch of16 before the second batch of32 examples that arrives next can
+be started. In(b), however, half of second batch of32 examples can share computation with the first
+batch of16 that is still finishing. Finally,(c)demonstrates a situation where some examples within
+each batch can early-exit after stage 2; their vacant slots in the batch are then immediately filled.
+LoRA initialization via truncated SVDUnlike typical LoRA finetuning setups that train only the
+LoRA parameters, here we train all model parameters to let the shared parameters learn an optimal
+centroid for all of the layer depths that they support. Therefore, instead of following standard
+zero initialization for adaptation to the frozen base model, we propose novel initialization methods,
+especially designed for Relaxed Recursive Transformers. To effectively match the performance of the
+original full-size model after initializing the tied weights as described in§2.2, we aim for the sum of
+the tied weights (Φ′) and LoRA weights (ΔΦ′) to approximately recover the full-size model’s weights
+(Φ). We exploit truncated Singular Value Decomposition (SVD) (Hansen, 1987) on residual matrices
+between original weights and tied weights:
+Uℓ
+𝑟 ,Σℓ
+𝑟 ,Vℓ
+𝑟 = Truncated SVD(Wℓ −W′
+( (ℓ−1) mod 𝐿/𝐵)+1; 𝑟), ℓ ∈ [ 1, 𝐿], (4)
+where outputs retain the firstr columns corresponding to ther largest singular values.W denotes
+the weight matrices of the full-size model, andW′ denotes those of the Recursive Transformer. We
+initialize the LoRA’s weights with principal components in Eq.4:B as the product ofU𝑟 and Σ𝑟, andA
+as the transpose of the right singular vectorsV𝑟 (see Figure2).
+Remark. By initializing LoRA weights through the proposed truncated SVD methodology, the rank of
+the LoRA modules serves as a pivotal hyperparameter, enabling the Relaxed Recursive Transformer to
+seamlessly transition between the two extremes of the vanilla and Recursive Transformer architectures.
+With sufficiently large ranks, our Relaxed Recursive Transformer (Eq.3) approximates the full-size
+vanilla model (Eq.1):
+Wx ≈ W′x + (U𝑟Σ𝑟) (V⊤
+𝑟 )x = W′x +BAx = W′x + ΔW′x, (5)
+Meanwhile, setting the rank to zero reduces the model to a Recursive Transformer, as the LoRA
+modules contribute no additional parameters, highlighting the flexibility of this relaxation approach.
+2.4. Continuous Depth-wise Batching and Early-Exiting
+In real-world deployments, user requests arrive sequentially and asynchronously. Recent research has
+introduced continuous sequence-wise batching (Kwon et al., 2023; Yu et al., 2022), a serving strategy
+that allows new requests to immediately replace completed (terminated) sequence within a batch.
+5
+
+===== PAGE 6 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Model Architecture Pretraining
+Models N-emb Emb 𝑁𝐿 𝑑𝑚𝑜𝑑𝑒𝑙 𝑁ℎ𝑒𝑎𝑑 𝑁𝐾𝑉 𝑑ℎ𝑒𝑎𝑑 Vocab Dataset 𝑁𝑡𝑜𝑘 𝐿𝑐𝑡𝑥
+Gemma2B 1.98B 0.52B 18 2048 8 1 256 256K Unreleased 3T 8K
+TinyLlama1.1B 0.97B 0.13B 22 2048 32 4 64 32K SlimPajama+ 73B ∗
+2KStarcoderdata 32B
+Pythia1B 0.81B 0.21B 16 2048 8 8 256 50K Pile 300B 2K
+Table 1 | Key parameters and pretraining details of three models. The sizes of each model refer
+to the number of embedding parameters (embedding matrices and classifier heads), and all other
+non-embeddingparameters. GemmaandTinyLlamautilizeMulti-Query(Shazeer,2019)andGrouped-
+Query(Ainslieetal.,2023)attentionmechanisms, whichleadstoareducednumberofkey-valueheads.
+∗We take an early TinyLlama checkpoint to study recursive conversions on top of an under-trained
+model on SlimPajama. The vanilla performance with longer pretraining is reported in Table D.1.
+This approach exploits the fact that the computation performed for a new token is functionally the
+same and utilize the same model parameters. By continuously scheduling requests in this manner,
+models can operate at their maximum batch capacity, thereby enhancing serving efficiency.
+The repetitive structure of Recursive Transformers allows for the same function to be applied not
+just across sequences, but also across depths (loop iterations). This introduces a new dimension for
+continuous batching, which we call Continuous Depth-wise Batching. This technique enables the
+simultaneous computation of different iterations of the looped layer block for different samples (See
+Figure3 for an example with a single forward pass; this easily extends to multiple decode iterations
+per request.) With a maximum batch size of 32, a standard Transformer must wait for all model
+stages to complete before processing new requests. In contrast, our Recursive Transformer, because it
+shares layer functions across all stages, can immediately schedule new incoming requests at timestep
+2, maximizing batch size utilization. This strategy can yield a substantial speedup in generation and
+reduce the time to first token (Fu et al., 2024; Miao et al., 2023) through faster scheduling.
+Throughput improvements from depth-wise batching are further amplified when combined with
+early-exiting (Bae et al., 2023; Elbayad et al., 2020; Schuster et al., 2022). As depicted in Figure3c,
+once some samples exit after certain looping iterations, queued requests can then be immediately
+scheduled. While Recursive Transformers leverage the speedup from early-exiting, they also inherently
+address a key challenge of batched inference in early-exiting approaches: the synchronization issue
+when serving large batches, as early-exited tokens might wait for others to complete processing
+through the entire model. We demonstrate that Recursive Transformers, equipped with this dynamic
+sample scheduling at various depths, can theoretically allow up to 2-3× speedup on evaluated LLMs.
+3. Experiments
+3.1. Experimental Setup
+We evaluate our method on three popular pretrained LLMs: Gemma 2B(Team et al., 2024), TinyLlama
+1.1B(Zhang et al., 2024b), and Pythia 1B(Biderman et al., 2023). Table1 summarizes each model’s
+architecture and pretraining recipes, and their few-shot performance is summarized in AppendixD.
+Unless stated otherwise, the number of looping blocks(B) is set to 2 for all experiments. The results
+for Gemma withB = 3 is provided in the appendix. After converting to Recursive Transformers, we
+uptrained models on the SlimPajama dataset(Soboleva et al., 2023). We used the Language Model
+Evaluation Harness framework(Gao et al., 2023) to evaluate accuracy on seven few-shot tasks, and
+averaged them for performance comparison. Detailed experimental setup can be found in AppendixE.
+6
+
+===== PAGE 7 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Uptrain Perplexity↓ Few-shot Accuracy↑
+Models N-emb PT 𝑁𝑡𝑜𝑘 SlimP RedP PG19 LD HS PQ WG ARC-e ARC-c OB Avg
+Gemma2B
+1.99B ✓ - 11.46 8.18 13.52 63.1 71.4 78.1 65.0 72.3 41.9 40.2 61.7
+1.99B ✓ 15B 10.76 8.47 13.08 63.5 68.5 77.0 63.5 67.6 38.1 42.6 60.1
+1.99B ✓ 60B 10.58 8.44 12.71 60.3 67.9 76.9 63.5 64.9 37.2 39.6 58.6
+TinyLlama1.1B
+0.97B ✓ - 12.26 9.37 11.94 43.3 42.2 66.8 53.4 44.7 23.2 29.2 43.3
+0.97B ✓ 15B 9.87 8.24 10.73 49.2 46.3 68.8 54.0 48.2 26.0 32.2 46.4
+0.97B ✓ 60B 9.59 8.12 10.42 51.6 48.8 68.6 54.1 49.9 26.2 32.8 47.4
+Pythia1B
+0.81B ✓ - 15.68 9.90 12.05 57.5 49.1 70.4 52.8 51.9 26.7 33.4 48.8
+0.81B ✓ 15B 13.46 9.95 13.38 55.0 49.0 71.0 53.6 51.8 28.2 32.8 48.8
+0.81B ✓ 60B 12.83 9.76 13.57 53.0 50.2 71.1 54.8 51.9 27.7 31.6 48.6
+Table 2| Uptraining the pretrained models on datasets that differ significantly in quality or distribution
+from their pretraining datasets can lead to decreased performance. We evaluated models after
+uptraining on the SlimPajama dataset. We measured perplexity on test sets of the SlimPajama,
+RedPajama, and PG19, and few-shot accuracy on LAMBADA, HellaSwag, PIQA, WinoGrande, ARC-
+easy, ARC-challenge, and OpenBookQA benchmarks.
+3.2. Non-Recursive Model Baselines
+Given that we leveraged pretrained model weights for initialization and subsequently uptrained the
+models, it becomes crucial to define clear performance targets for our parameter-shared models.
+Full-size model Our ultimate goal is for the Recursive Transformer to achieve performance compa-
+rable to the original, full-size pretrained model, without much uptraining. However, we observed that
+the distribution divergence between the pretraining and uptraining datasets can hinder achieving the
+desired performance. In particular, uptraining on new datasets, particularly those of comparatively
+lower quality, sometimes led to performance degradation on certain benchmarks. Table2 summarizes
+the evaluation results of full-size models based on the number of uptraining tokens. For instance, in
+the case of Gemma, where the pretraining dataset is unreleased but potentially well-curated(Team
+et al., 2024), all few-shot performance metrics gradually decreased after uptraining on the SlimPajama
+dataset. This suggests that the achievable upper bound performance with the SlimPajama dataset
+might be considerably lower than the original model performance. Therefore, we set the target
+performance for Gemma and Pythia models as the performance achieved by uptraining a full-size
+pretrained model with an equivalent number of tokens. Since TinyLlama was already pretrained on
+SlimPajama—which is the same dataset we use for uptraining (eliminating any distribution shift)—for
+slightly longer than our runs, we use the performance of the original checkpoint as reference.
+Reduced-size model To demonstrate the performance advantages of Recursive Transformers com-
+paredtomodelswithanequivalentnumberofparameters,weintroduceanotherbaseline: reduced-size
+models. These models have either half or one-third the parameters of their full-sized counterparts,
+matching the parameter count of our recursive models. However, these reduced models are pretrained
+from scratch on the same training recipe (number of training tokens and distillation from full-size
+model), but without the benefits of the pretrained weights and the looping mechanism. This compari-
+son serves to highlight the efficacy of our initialization techniques and the recursive function itself in
+attaining strong performance, even with a constrained model size.
+3.3. Main Results
+Figure4 presents the few-shot performance of Recursive Transformers with two blocks and their
+relaxed variants. Recursive Transformers, even without relaxation, demonstrate remarkably high
+7
+
+===== PAGE 8 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Full-size
+Reduced-size
+Recursive
+Relaxed
+Few-shot Accuracy
+40
+45
+50
+55
+60
+Model Sizes
+1.0B 1.5B 2.0B
+(a) Gemma
+Full-size
+Reduced-size
+Recursive
+Relaxed
+Few-shot Accuracy
+40
+42
+44
+46
+Model Sizes
+0.4B 0.6B 0.8B 1.0B (b) TinyLlama
+Full-size
+Reduced-size
+Recursive
+Relaxed
+Few-shot Accuracy
+38
+42
+46
+50
+Model Sizes
+0.4B 0.6B 0.8B (c) Pythia
+Figure 4 | Recursive and Relaxed Recursive Transformers achieve comparable performance to full-size
+models, and significantly outperform reduced-size models. Recursive models were initialized using
+the Stepwise method, while relaxed models utilized Average and SVD methods for looped layers
+and LoRA modules. We show the performance of four different rank values: 64, 128, 256, and 512.
+Recursive and reduced-size models were either uptrained (recursive model) and pretrained from
+scratch (reduced-size model) on 60 billion tokens using a knowledge distillation objective.
+performance despite having only half the parameters of the full-size model. The Gemma model
+achieved a 10%p performance gain compared to the reduced-size model, which was also trained on 60
+billion tokens using distillation loss. Remarkably, the recursive TinyLlama model even surpassed the
+vanilla model’s performance, even though the latter was pretrained on a larger corpus of 105 billion
+tokens. Our initialization techniques proved highly effective in achieving this superior result, along
+with the benefit of the uptraining dataset (SlimPajama) being the same as its pretraining dataset.
+The relaxed models effectively interpolate between the full-size model and the Recursive Trans-
+former, depending on the LoRA rank. As the model size increases with larger LoRA modules, SVD
+initialization methods allow for a more precise approximation of full-rank matrices, resulting in
+improved performance. Notably, the relaxed Gemma model with a rank of 512 achieves performance
+on par with the original model pretrained on 3 trillion tokens (58.4% vs. 58.6%), despite using fewer
+parameters and uptraining on only 60 billion tokens. This trade-off provides flexibility in selecting
+the best configuration for various deployment scenarios. We believe that additional uptraining and
+higher-quality datasets could yield better performance with even more streamlined models.
+In the subsequent sections, we provide a comprehensive overview of extensive ablation studies
+conducted prior to achieving this final performance. In §3.4, we delve into the analysis of various
+initialization methodologies for Recursive Transformers. Insights into the relaxation model are
+detailed in §3.5. Finally, we explore enhanced training strategies like knowledge distillation (§3.6).
+3.4. Initialization Techniques for Looped Layers
+StepwiseinitializationservesasthebestinitialpointforRecursiveTransformers We present the
+traininglossofGemmamodelsinitializedusingthreedifferentmethodsinFigure5a,andtheirfew-shot
+performance in Figure5b. Our proposed methods significantly outperformed random initialization,
+which simply adds recursion to a reduced-size model, suggesting that leveraging pretrained weights
+in any manner is beneficial for performance boost. Moreover, the Stepwise methodology consistently
+demonstrated best performance, aligning with insights that LLMs can preserve performance even with
+a few layers skipped(Elhoushi et al., 2024; Raposo et al., 2024; Zhang et al., 2024a). Interestingly,
+as summarized in Table F.1, the recursive TinyLlama model, uptrained on only 15 billion tokens,
+8
+
+===== PAGE 9 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Full-size
+Stepwise
+Average
+Lower
+Random
+Training Loss
+2.2
+2.6
+3.0
+3.4
+3.8
+# of Tokens
+0B 5B 10B 15B
+(a) Loss curves for Gemma
+Stepwise
+Average
+Lower
+Random
+Few-shot Accuracy
+20
+30
+40
+50
+60
+Gemma TinyLlama Pythia (b) Average few-shot performance
+Gemma
+TinyLlama
+Pythia
+Full-size
+Reduced-size
+Recursive (B2)
+Recursive (B3)
+Few-shot Accuracy
+30
+40
+50
+60
+Model Sizes
+0.5B 1.0B 1.5B 2.0B (c) Recursive model performance
+Figure 5 | (a)Among the proposed methods, the Stepwise method obtains the lowest training loss
+on the SlimPajama dataset.(b) The Stepwise method consistently demonstrate the highest average
+few-shot accuracy across three architectures.(c)Recursive Transformers initialized with the Stepwise
+method demonstrated significant performance gains compared to non-recursive model baselines.
+yields few-shot performance comparable to the original model pretrained on 105 billion tokens. This
+suggests that with sufficient training, even a recursive architecture can match the performance of a
+full-size pretrained model (Dehghani et al., 2019; Takase and Kiyono, 2023).
+Recursive Gemma 1B outperforms both pretrained TinyLlama 1.1B and Pythia 1BThe looped
+Gemma 1B model, utilizing our proposed Stepwise method, outperformed reduced-size baselines
+with equivalent parameter counts by up to 13.5 percentage points (51.7% vs. 38.2%). Furthermore,
+it even outperformed the full-size TinyLlama 1.1B and Pythia 1B models (see Figure5c). This is a
+noteworthy achievement given that Pythia was pretrained on 300 billion tokens, whereas the recursive
+Gemma was uptrained on only 15 billion tokens. Consequently, high-performing LLMs serve as a
+promising starting point, as their recursive counterparts readily outperform other ordinary vanilla
+models of similar size. Further details can be found in Appendix F.
+Takeaways for Recursive Transformer
+We find that converting well-pretrained models into Recursive Transformers leads to high-
+performing models with minimal uptraining. Notably, initializing looped layers via the Stepwise
+method yields the best results. With just 15 billion tokens of uptraining, a recursive Gemma
+1B model outperforms even the full-size pretrained TinyLlama and Pythia models.
+3.5. Relaxation of Strict Parameter Sharing via LoRA Modules
+Average initialization for looped layers is most compatible with Relaxed Recursive Transformer
+Figures6a and 6b illustrate the effect of relaxing parameter sharing via layer-wise LoRA modules.
+Notably,initializingtiedlayersinrelaxedmodelswithAveragemethodyieldedsubstantialperformance
+improvements, even outperforming the non-relaxed model initialized with Stepwise. Approximating
+residual matrices between averaged weights and their individual weights appears readily achievable
+using truncated SVD with low ranks. In contrast, we observed an intriguing phenomenon where our
+models initialized with Stepwise occasionally showed performance degradation after relaxation. This
+is likely because capturing the nuances between entirely distinct layer weights is challenging with an
+insufficient rank, leading to a suboptimal solution. Further details are provided in AppendixG.
+9
+
+===== PAGE 10 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Stepwise
+Average
+Lower
+LoRA ✓
+LoRA ✗
+Training Loss
+2.3
+2.7
+3.1
+# of Tokens
+0B 5B 10B 15B
+(a) Loss changes in Gemma
+Stepwise
+Average
+Lower
+LoRA ✓
+LoRA ✗
+Few-shot Accuracy40
+50
+60
+Gemma TinyLlama Pythia (b) Accuracy gains from relaxation
+Zero Init
+SVD Init
+LoRA ✓
+LoRA ✗
+Few-shot Accuracy
+40
+45
+50
+55
+60
+Stepwise Average Lower (c) Effects of SVD initialization
+Figure 6 | The Relaxed Recursive Transformer, with its looped layer initialized using Average method,
+achieved the best performance in terms of both (a) training loss and (b) few-shot accuracy. The
+models utilize two blocks, with the LoRA modules initialized using the SVD method at a rank of 512.
+(c) SVD initialization method significantly enhanced performance compared to zero initialization.
+SVD initialization to approximate pretrained weights outperforms zero initializationLoRA
+modules initialized with zero values guarantee that the model begins training from the same point as
+the non-relaxed model. Conversely, SVD initialization positions the model closer to either the full-size
+model (with full-rank) or the non-relaxed model (with small rank). To emphasize the effectiveness of
+initializing near full-size model weights, we compared these two methods at a moderately large rank
+of 512, as shown in Figure6c. Our proposed SVD strategy demonstrated an impressive performance
+boost of up to 6.5 points, facilitating faster convergence by updating the principal low-rank matrices
+(aligned with findings in Meng et al. (2024)). For results across other architectures, refer to FigureG.2.
+Higher rank enhances recovery of original pretrained weightsAt full rank, relaxed models can
+perfectly match full-size pretrained models. Consequently, as illustrated in Figure7a, performance
+generally improves with increasing rank, resulting in a clear Pareto frontier between model size and
+performance. However, only Stepwise initialization showed a U-shaped performance trend: a middle-
+range rank resulted in poor approximation, whereas very low ranks (akin to random initialization for
+LoRA modules) yielded better performance. The overall results are summarized in TableG.2.
+Takeaways for Relaxed Recursive Transformer
+Adjusting the LoRA rank in the Relaxed Recursive Transformer, together with our SVD-based
+initialization technique, allows for a smoother trade-off between a fully weight-tied recursive
+model and a vanilla model. Furthermore, we find that initializing the shared weights in the
+looped layers with the Average method leads to the best performance in this setting.
+3.6. Extended Uptraining and Knowledge Distillation
+We further enhanced the performance of our low-rank models by introducing two techniques: up-
+training on an extended corpus and knowledge distillation from the full-sized model. Specifically, we
+increased the number of uptraining tokens from 0.5% to 2% of the total 3 trillion tokens used for
+pretraining Gemma models, resulting in a total of 60 billion tokens. Additionally, we regularized the
+losses using a forward Kullback-Leibler divergence(Hinton et al., 2015; Kim and Rush, 2016), which
+exhibited the best performance gains among the examined distillation losses. Table I.1 summarizes
+the results of various ablation studies conducted to investigate the impact of these two techniques.
+10
+
+===== PAGE 11 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Stepwise
+Average
+Lower
+Few-shot Accuracy
+45
+50
+55
+LoRA Rank
+0 64 128 256 512
+(a) Performance by LoRA rank
+Full-size
+Reduced-size
+Recursive
+Relaxed
+Ntok=15B
+Ntok=60B + KD
+Few-shot Accuracy
+35
+40
+45
+50
+55
+60
+Model Sizes
+1.0B 1.5B 2.0B (b) Gains from longer KD training
+Gemma
+TinyLlama
+Pythia
+Full-size
+Recursive
+Relaxed
+Few-shot Accuracy
+40
+50
+60
+Model Sizes
+0.5B 1.0B 1.5B 2.0B (c) Overall performance
+Figure 7 | (a) Increasing the LoRA rank typically leads to improved performance in relaxed Gemma
+models, attributed to the use of SVD initialization. (b) Extended uptraining and knowledge distillation
+yielded substantial accuracy gains for Gemma models. Note that the full-size model is a pretrained
+modelthatisfurtheruptrainedon60billiontokens. ( c)RecursiveandRelaxedRecursiveTransformers
+achieve a compelling Pareto frontier with respect to model size and performance. Recursive and
+relaxed models used Stepwise and Average method to initialize looped layers, respectively.
+Uptrain Looping Early-Exit Train Few-shot Accuracy↑
+N-emb PT 𝑁𝑡𝑜𝑘 Block Init 𝑁𝑡𝑜𝑘 CE KD LD HS PQ WG ARC-e ARC-c OB Avg Δ
+0.99B ✓ 15B 2 Step - - - 53.0 57.3 73.2 56.2 56.1 29.2 36.6 51.7 -
+0.99B ✓ 15B 2 Step 15B Weighted ✗ 48.9 55.5 72.7 55.3 54.9 30.1 36.0 50.5 –1.2
+49.5 54.8 72.0 53.4 54.1 29.1 35.6 49.8 -
+53.0 59.1 73.9 55.4 57.4 30.6 37.8 52.5 +0.80.99B ✓ 15B 2 Step 15B Agg(0.1) ✗ 45.9 51.2 71.4 54.5 48.1 26.8 32.0 47.1 -
+0.99B ✓ 15B 2 Step 15B Weighted ✓ 47.7 55.1 73.2 55.6 54.5 29.1 37.2 50.4 –1.3
+48.3 54.9 72.1 55.9 54.3 28.4 35.4 49.9 -
+52.9 58.9 73.7 55.7 57.5 31.1 38.2 52.6 +0.90.99B ✓ 15B 2 Step 15B Agg(0.1) ✓ 46.3 52.1 71.6 55.3 49.2 28.5 32.6 48.0 -
+Table 3| A small loss coefficient to the first loop output (intermediate output) can significantly improve
+intermediate performance without compromising the final performance. Performance was evaluated
+under a static-exiting scenario(Schuster et al., 2022), where all tokens exit at either first or second
+loop. We further trained the previously uptrained Gemma models on 15 billion tokens (post-training).
+Delta( Δ) denotes the performance changes in the final outputs after early-exit training.
+The combined effect of these techniques is presented in Figure7b, demonstrating an improvement
+of up to 4.1 percentage points in few-shot accuracy compared to the previous 15 billion token
+uptraining results. Notably, the relaxed Gemma model with a rank of 512 nearly matched the
+performance of the full-size model. We also expect that further performance gains can be achieved
+with a much lighter recursive model by utilizing a superior teacher model or conducting more
+extensive training on high-quality data. Figure7c illustrates the Pareto frontier achieved by the final
+models. All models exhibit competitive performance compared to the full-size model. Moreover, the
+superior performance of the recursive Gemma model strongly highlights the advantages of converting
+high-performing LLMs to a recursive architecture. Additional details can be found in AppendixI.
+3.7. Early-Exit Training Strategy for Recursive Transformer
+The throughput of Recursive Transformers can be amplified by an early-exiting framework. Hence, we
+further train intermediate representations from fewer looping iterations to enable token prediction.
+11
+
+===== PAGE 12 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Vanilla
+Vanilla (CSB)
+Recursive
+Relaxed
+×2.66
+×1.71
+×1.66
+Gemma
+TinyLlama
+Pythia
+Few-shot Accuracy
+40
+45
+50
+55
+60
+Normalized Throughput
+1.0 1.5 2.0 2.5 3.0 3.5 4.0
+N-emb Loop LoRABatch ExitAcc. Thr. Δ𝑉 Δ𝑆𝑒𝑞
+1.99B - - - ✗ 57.31080×1.00 ×0.71
+1.99B - - CSB ✗ 57.31528×1.41 ×1.00
+0.99B 2 - CDB ✓ 54.02877×2.66 ×1.88
+1.07B 2 64 CDB ✓ 54.02157×2.00 ×1.41
+1.15B 2 128 CDB ✓ 54.62149×1.99 ×1.41
+1.30B 2 256 CDB ✓ 55.21921×1.78 ×1.26
+1.60B 2 512 CDB ✓ 56.21719×1.59 ×1.13
+Figure 8 | Continuous depth-wise batching (CDB) with early exiting enables Recursive Transformers
+to theoretically achieve significant throughput improvements. Throughput(tokens/sec) was averaged
+across SlimPajama, RedPajama, and PG19, and then normalized to the throughput of the vanilla
+Pythia model. The accompanying table gives detailed throughout and performance measurements
+for Gemma. Δ𝑉 measures throughput relative to the vanilla Gemma model, whileΔ𝑆𝑒𝑞 measures
+throughput relative to the vanilla Gemma model with continuous sequence-wise batching (CSB).
+We conducted an ablation study on various strategies, as summarized in Table3 (more detailed results
+are presented in TableJ.1). Directly applying the weighted CE loss (L = Í𝐵
+𝑖=1 𝛼𝑖L𝑖 where 𝛼𝑖 = 𝑖/Í
+𝑖 𝑖)
+commonly used in prior works (Bae et al., 2023; Schuster et al., 2022) led to an overemphasis on
+the training of intermediate representations. To address this, we employ an aggressive coefficient
+strategy that aggressively reduces the loss coefficient for intermediate outputs while maintaining a
+coefficient of 1 for the final output. Our experiments demonstrated that an aggressive coefficient of
+0.1, utilizing knowledge distillation from the detached final outputs (Bae et al., 2023), effectively
+preserves final performance while enhancing intermediate performance. Notably, the first loop output
+yielded only a difference of 4.6 percentage points in accuracy compared to the final output. This
+underscores the potential to maximize the benefits of early-exiting in parameter-shared LLMs.
+We applied this post-training strategy for early-exiting to our final uptrained models (shown
+in §3.3), with all experimental results detailed in AppendixJ. The aggressive coefficient strategy,
+combined with self-distillation, consistently achieved the best performance for intermediate outputs
+while maintaining strong performance for the final loop output across all models. However, as the
+optimal strategy derived from the non-relaxed models was directly applied to the relaxed models, a
+more tailored training approach might further enhance the performance of intermediate loop outputs
+in Relaxed Recursive Transformers.
+3.8. Hypothetical Generation Speedup via Continuous Depth-wise Batching
+How we theoretically approximate actual throughput As developing practical early-exiting
+algorithms is beyond the scope of this work, we present hypothetical throughput improvements based
+on an oracle-exiting approach(Bae et al., 2023; Schuster et al., 2022). This assumes that tokens exit at
+the earliest looping block where their prediction aligns with the final loop’s prediction. We simulated
+the generation of language modeling datasets as if they were generated by our models, to obtain
+the exit trajectory for each token. Then, we measured the average per-token generation time under
+specific constraints, such as different memory limit or context lengths. Using these measurements
+and the exit trajectory data, we conducted simulations to estimate theoretical throughput. Detailed
+explanations and limitations are discussed in AppendixK.
+12
+
+===== PAGE 13 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Continuous depth-wise batching paired with early-exiting can substantially boost throughput
+Figure8 illustrates the throughput of our proposed models and the vanilla Transformer across
+three architectures. We consistently achieve higher speeds than the vanilla models by combining
+continuous depth-wise batching with early-exiting, even surpassing those with continuous sequence-
+wise batching(Kwon et al., 2023; Yu et al., 2022). In particular, Recursive models demonstrate up to
+2.66× speedup in generation compared to vanilla counterparts. Additionally, the recursive Gemma
+model significantly outperforms the vanilla pretrained Pythia model, with nearly 4× improvement in
+throughput. Relaxedrecursivemodelsshowacleartrade-offbetweenachievablefew-shotperformance
+and throughput, modulated by the degree of relaxation through the LoRA ranks. This characteristic
+enables flexible model selection tailored to specific deployment scenarios. Comprehensive results are
+presented in TablesK.2 and K.4.
+Takeaways for Continuous Depth-wise Batching
+We analyze the potential for throughput improvement in the Recursive Transformer via contin-
+uous depth-wise batching, a novel inference paradigm. In theory, we find that we can achieve
+up to 2-3× speedup compared to a vanilla Transformer. This even outperforms the throughput
+gain achieved by existing continuous sequence-wise batching methods in vanilla models.
+4. Related Work
+Cross-layer parameter sharing has proven to be an effective method for achieving parameter efficiency
+in deep learning models such as RNNs (Graves, 2016b; Sherstinsky, 2018), CNNs (Eigen et al.,
+2014; Guo et al., 2019; Savarese and Maire, 2019; Shen et al., 2022), and the popular Transformer
+architecture. The Universal Transformer (Dehghani et al., 2019), a recurrent self-attentive model,
+demonstrated superior performance to non-recursive counterparts with significantly fewer parameters.
+Thiscross-layerparametersharingapproachhassubsequentlybeenexploredinvarioustasks,including
+language understanding (Lan et al., 2020), language modeling (Bai et al., 2019; Csordás et al., 2024;
+Glorioso et al., 2024; Liu et al., 2024b; Mohtashami et al., 2023), and machine translation (Dabre and
+Fujita, 2019; Ge et al., 2022; Milbauer et al., 2023; Takase and Kiyono, 2023; Xia et al., 2019). These
+methods often claim to achieve comparable performance with more compact models and increased
+computational speed, while also setting the ground for effective adaptive compute solutions (Dehghani
+et al., 2019; Graves, 2016b; Schuster et al., 2021).
+Concurrently, there has been growing interest in exploiting recurrent architectures for algorithmic
+or logical reasoning tasks (Saunshi et al., 2024). Prior research (McLeish and Tran-Thanh, 2022;
+Schwarzschild et al., 2021) has shown that recurrent networks can extrapolate reasoning strategies
+learnedonsimpleproblemstoharder, largerproblemsthroughadditionalrecurrencesduringinference.
+The looped Transformer structure has also been employed to emulate basic computing blocks for
+programsimulation(Giannouetal.,2023),tolearniterativealgorithmsfordata-fittingproblems(Yang
+et al., 2024), to achieve length generalization in algorithmic tasks (Fan et al., 2024), and promising
+theoretical potential for few-shot learning (Gatmiry et al., 2024).
+However, previous work has predominantly focused on relatively small Transformer models,
+trained from scratch without leveraging pretrained model weights. Our work distinguishes itself by
+investigating parameter sharing in the context of LLMs and proposing effective initialization strategies
+that leverage the knowledge embedded within existing LLMs. To the best of our knowledge, we are
+the first to propose a generalized framework for parameter-shared models, enabling relaxation in
+weight tying constraints through layer-specific modules.
+13
+
+===== PAGE 14 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+In this paper, we also discuss how Recursive Transformers can be well suited for early-exiting
+techniques to accelerate decoding in LLMs. The inherent recursive structure readily enables early-
+exiting for individual responses within a large serving batch, which is often a practical limitation of
+such techniques. Vanilla Transformers encounter a synchronization issue with early-exiting, where
+the model must forward all layers if even a single token in a batch requires full processing (exited
+tokens must wait for them). Several approaches attempt to exploit this idle time by computing
+missing KV caches for exited tokens in later layers, which are essential for subsequent sequence
+generation. These techniques include state propagation (Elbayad et al., 2020; Schuster et al., 2022),
+SkipDecode (Del Corro et al., 2023), and parallel decoding (which can be combined with Speculative
+Decoding) (Bae et al., 2023; Chen et al., 2024b; Elhoushi et al., 2024; Liu et al., 2024a; Tang et al.,
+2024). Nevertheless, the heterogeneous parameters across varying model depths still hinder the
+efficient progression of exited tokens to subsequent sequences. In contrast, our Recursive Transformers
+enable parallel computation for tokens at different depths and sequences (in a continuous depth-wise
+batching paradigm)—also allow for parallel computation of missing KV caches with minimal overhead
+during the memory-bounded decoding phase.
+5. Conclusion and Future Work
+In this work, we introduced Recursive Transformers, in which we compress LLMs via parameter
+sharing across recursively looped blocks of layers. Additionally, we presented a novel relaxation
+strategy that allows for low-rank deltas between shared layers by integrating layer-specific LoRA
+modules into the fully-tied structure. Through novel initialization techniques for looped layers and
+LoRA modules, we achieved significant performance improvements that closely approximate the
+original pretrained model. Finally, by exploiting the recursive patterns and an early-exiting approach,
+we propose a continuous depth-wise batching paradigm tailored for efficient serving systems of
+Recursive Transformers. We theoretically demonstrated that an oracle-exiting strategy can yield
+substantial throughput gains, reaching up to 2-3× speedup. This work motivates further research on
+recursive patterns in modern LLMs such as:
+Compatibility with sparse designs Sparsity-based approaches, such as pruning (Han et al., 2015),
+quantization (Jacob et al., 2018), or layer-skipping mechanisms (Raposo et al., 2024), recently also
+give promising model compression results. In fact, many of these techniques are complementary to
+our approach: for example, we can seamlessly have a recursive,sparse architecture. In this work,
+we rather choose to focus on recursive dense designs (a domain that remains relatively unexplored)
+that also have very promising, practical performance traits (i.e., allowing for continuous depth-wise
+batching for faster throughput). That said, while in this work we take the first step at studying Relaxed
+Recursive Transformer with dense Transformer layers, we do believe that incorporating Mixture-of-
+expert (Fedus et al., 2022), activation-skipping (Liu et al., 2023) and SSM components (Glorioso
+et al., 2024) within the looped blocks are promising directions for future research.
+Latent Reasoning via Recurrent DepthBeyond efficiency gains through down-scaling materialized
+parameters with recursive patterns, an alternative research direction lies in scaling-up recurrent depth
+to facilitate latent reasoning. Specifically, recurrent computation can manifest thinking vertically
+by processing internal hidden states at each depth. One promising approach involves leveraging
+contemplation tokens (Goyal et al., 2024; Pfau et al., 2024) or latent (continuous) space representa-
+tions (Cheng and Van Durme, 2024; Hao et al., 2024) to enhance reasoning in mathematical and code
+generation tasks. Another valuable direction focuses on enhancing the efficiency and training stability
+of approaches that recursively scale-up depth, building upon concepts of deep thinking (Geiping et al.,
+2025; Schwarzschild et al., 2021).
+14
+
+===== PAGE 15 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Scaling up Recursive Transformers Scaling our approach to larger LLMs (7B and beyond) is
+a promising avenue for future research. While our methodology is expected to remain effective,
+achieving comparable performance may require significantly higher uptraining costs. Increased model
+size offers the potential for a reduced memory footprint from recursive patterns; however, it is unclear
+whether this translates to larger batch sizes, given the corresponding increase in hidden dimensions.
+Nevertheless, our continuous depth-wise batching will yield considerable gains in serving efficiency.
+Beyond hypothetical generation speedupOur oracle-exiting approach assumes any intermediate
+prediction matching the final output can be exited. However, accurate throughput measurement
+requires confidence-based early-exiting algorithms (Bae et al., 2023; Schuster et al., 2022). Moreover,
+practical deployment needs to address decoding bottlenecks like key-value cache computation for
+exited tokens in remaining loops. Nevertheless, there are potential solutions: for example, the missing
+KV cache computations can be addressed by leveraging continuous depth-wise batching, allowing the
+KV cache for exited positions in subsequent loops to be performed in parallel with the computations
+for the next sequence sample. Moreover, we can explore key-value cache sharing strategies (Brandon
+et al., 2024; Sun et al., 2024) for future work.
+Efficient serving of multi-LoRA layersRelaxed models require the computation of distinct LoRA
+modules during batched inference, akin to multi-task learning (Feng et al., 2024; Wang et al., 2023),
+hindering parallel computation. We concatenated LoRA weights into a single weight to improve
+efficiency over sequential computation, yet it introduces redundancy. To mitigate this, we can explore
+optimized CUDA kernels for LoRA serving (Chen et al., 2024a; Sheng et al., 2023) and parallelization
+across accelerators, inspired by distributed training for Mixture of Experts (Fedus et al., 2022; Gale
+et al., 2023).
+Acknowledgements
+We thank Jacob Eisenstein for valuable feedback on an earlier version of the paper. We thank Jiyoun
+Ha, Alfred Piccioni, Dayeong Lee for the support with setting up the experimental environment. We
+also thank Donald Metzler, Ivan Korotkov, Jai Gupta, Sanket V. Mehta, Vinh Q. Tran, Brennan Saeta,
+Jean-François Kagy, Zhen Qin, and Jing Lu for helpful conversations. Finally, we thank the Google
+Cloud Platform for awarding Google Cloud credits for this project.
+References
+R. Agarwal, N. Vieillard, Y. Zhou, P. Stanczyk, S. R. Garea, M. Geist, and O. Bachem. On-policy
+distillation of language models: Learning from self-generated mistakes. InThe Twelfth International
+Conference on Learning Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024, 2024. URL
+https://openreview.net/forum?id=3zKtaqxLhW.
+J. Ainslie, J. Lee-Thorp, M. de Jong, Y. Zemlyanskiy, F. Lebrón, and S. Sanghai. GQA: training
+generalized multi-query transformer models from multi-head checkpoints. InProceedings of the
+2023 Conference on Empirical Methods in Natural Language Processing, EMNLP 2023, Singapore,
+December 6-10, 2023, pages 4895–4901, 2023. doi: 10.18653/V1/2023.EMNLP-MAIN.298.
+S. Bae, J. Ko, H. Song, and S. Yun. Fast and robust early-exiting framework for autoregressive language
+models with synchronized parallel decoding. InProceedings of the 2023 Conference on Empirical
+Methods in Natural Language Processing, EMNLP 2023, Singapore, December 6-10, 2023, pages
+5910–5924, 2023. doi: 10.18653/V1/2023.EMNLP-MAIN.362.
+15
+
+===== PAGE 16 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+S. Bai, J. Z. Kolter, and V. Koltun. Deep equilibrium models. In Advances in Neu-
+ral Information Processing Systems 32: Annual Conference on Neural Information Pro-
+cessing Systems 2019, NeurIPS 2019, December 8-14, 2019, Vancouver, BC, Canada ,
+pages 688–699, 2019. URL https://proceedings.neurips.cc/paper/2019/hash/
+01386bd6d8e091c2ab4c7c7de644d37b-Abstract.html.
+S. Biderman, H. Schoelkopf, Q. G. Anthony, H. Bradley, K. O’Brien, E. Hallahan, M. A. Khan, S. Purohit,
+U. S. Prashanth, E. Raff, A. Skowron, L. Sutawika, and O. van der Wal. Pythia: A suite for analyzing
+large language models across training and scaling. InInternational Conference on Machine Learning,
+ICML 2023, 23-29 July 2023, Honolulu, Hawaii, USA, volume 202, pages 2397–2430, 2023. URL
+https://proceedings.mlr.press/v202/biderman23a.html.
+Y. Bisk, R. Zellers, J. Gao, Y. Choi, et al. Piqa: Reasoning about physical commonsense in natural
+language. InProceedingsoftheAAAIconferenceonartificialintelligence ,volume34,pages7432–7439,
+2020.
+W. Brandon, M. Mishra, A. Nrusimha, R. Panda, and J. Ragan-Kelley. Reducing transformer key-value
+cache size with cross-layer attention.CoRR, abs/2405.12981, 2024. doi: 10.48550/ARXIV.2405.
+12981.
+L. Chen, Z. Ye, Y. Wu, D. Zhuo, L. Ceze, and A. Krishnamurthy. Punica: Multi-tenant lora serving.
+Proceedings of Machine Learning and Systems, 6:1–13, 2024a.
+Y. Chen, X. Pan, Y. Li, B. Ding, and J. Zhou. EE-LLM: large-scale training and inference of early-exit
+large language models with 3d parallelism. InForty-first International Conference on Machine
+Learning, ICML 2024, Vienna, Austria, July 21-27, 2024, 2024b. URL https://openreview.
+net/forum?id=xFk0w9zoV3.
+J. Cheng and B. Van Durme. Compressed chain of thought: Efficient reasoning through dense
+representations. arXiv preprint arXiv:2412.13171, 2024.
+P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord. Think you have
+solved question answering? try arc, the ai2 reasoning challenge.arXiv preprint arXiv:1803.05457,
+2018.
+T. Computer. Redpajama: An open source recipe to reproduce llama training dataset, 2023. URL
+https://github.com/togethercomputer/RedPajama-Data.
+R. Csordás, K. Irie, J. Schmidhuber, C. Potts, and C. D. Manning. Moeut: Mixture-of-experts universal
+transformers. arXiv preprint arXiv:2405.16039, 2024.
+R. Dabre and A. Fujita. Recurrent stacking of layers for compact neural machine translation models.
+In The Thirty-Third AAAI Conference on Artificial Intelligence, AAAI 2019, The Thirty-First Innovative
+ApplicationsofArtificialIntelligenceConference, IAAI2019, The NinthAAAISymposiumonEducational
+Advances in Artificial Intelligence, EAAI 2019, Honolulu, Hawaii, USA, January 27 - February 1, 2019,
+pages 6292–6299, 2019. doi: 10.1609/AAAI.V33I01.33016292.
+T. Dao, D. Y. Fu, S. Ermon, A. Rudra, and C. Ré. Flashattention: Fast and memory-efficient exact atten-
+tion with io-awareness. InAdvances in Neural Information Processing Systems 35: Annual Conference
+on Neural Information Processing Systems 2022, NeurIPS 2022, New Orleans, LA, USA, November
+28 - December 9, 2022, 2022. URLhttp://papers.nips.cc/paper_files/paper/2022/
+hash/67d57c32e20fd0a7a302cb81d36e40d5-Abstract-Conference.html.
+16
+
+===== PAGE 17 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+M. Dehghani, S. Gouws, O. Vinyals, J. Uszkoreit, and L. Kaiser. Universal transformers. In7th
+International Conference on Learning Representations, ICLR 2019, New Orleans, LA, USA, May 6-9,
+2019, 2019. URLhttps://openreview.net/forum?id=HyzdRiR9Y7.
+L. Del Corro, A. Del Giorno, S. Agarwal, B. Yu, A. Awadallah, and S. Mukherjee. Skipdecode:
+Autoregressive skip decoding with batching and caching for efficient llm inference.arXiv preprint
+arXiv:2307.02628, 2023.
+Devvrit, S. Kudugunta, A. Kusupati, T. Dettmers, K. Chen, I. Dhillon, Y. Tsvetkov, H. Hajishirzi,
+S. Kakade, A. Farhadi, and P. Jain. Matformer: Nested transformer for elastic inference, 2023. URL
+https://arxiv.org/abs/2310.07707.
+A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Yang,
+A. Fan, A. Goyal, A. Hartshorn, A. Yang, A. Mitra, A. Sravankumar, A. Korenev, A. Hinsvark,
+A. Rao, A. Zhang, A. Rodriguez, A. Gregerson, A. Spataru, B. Rozière, B. Biron, B. Tang, B. Chern,
+C. Caucheteux, C. Nayak, C. Bi, C. Marra, C. McConnell, C. Keller, C. Touret, C. Wu, C. Wong,
+C. C. Ferrer, C. Nikolaidis, D. Allonsius, D. Song, D. Pintz, D. Livshits, D. Esiobu, D. Choudhary,
+D. Mahajan, D. Garcia-Olano, D. Perino, D. Hupkes, E. Lakomkin, E. AlBadawy, E. Lobanova,
+E. Dinan, E. M. Smith, F. Radenovic, F. Zhang, G. Synnaeve, G. Lee, G. L. Anderson, G. Nail,
+G. Mialon, G. Pang, G. Cucurell, H. Nguyen, H. Korevaar, H. Xu, H. Touvron, I. Zarov, I. A. Ibarra,
+I. M. Kloumann, I. Misra, I. Evtimov, J. Copet, J. Lee, J. Geffert, J. Vranes, J. Park, J. Mahadeokar,
+J. Shah, J. van der Linde, J. Billock, J. Hong, J. Lee, J. Fu, J. Chi, J. Huang, J. Liu, J. Wang, J. Yu,
+J. Bitton, J. Spisak, J. Park, J. Rocca, J. Johnstun, J. Saxe, J. Jia, K. V. Alwala, K. Upasani, K. Plawiak,
+K. Li, K. Heafield, K. Stone, and et al. The llama 3 herd of models.CoRR, abs/2407.21783, 2024.
+doi: 10.48550/ARXIV.2407.21783.
+D. Eigen, J. T. Rolfe, R. Fergus, and Y. LeCun. Understanding deep architectures using a recursive
+convolutional network. In2nd International Conference on Learning Representations, ICLR 2014,
+Banff, AB, Canada, April 14-16, 2014, Workshop Track Proceedings, 2014. URLhttp://arxiv.
+org/abs/1312.1847.
+M. Elbayad, J. Gu, E. Grave, and M. Auli. Depth-adaptive transformer. In8th International Conference
+on Learning Representations, ICLR 2020, Addis Ababa, Ethiopia, April 26-30, 2020, 2020. URL
+https://openreview.net/forum?id=SJg7KhVKPH.
+M.Elhoushi, A.Shrivastava, D.Liskovich, B.Hosmer, B.Wasti, L.Lai, A.Mahmoud, B.Acun, S.Agarwal,
+A.Roman,A.A.Aly,B.Chen,andC.Wu. Layerskip: Enablingearlyexitinferenceandself-speculative
+decoding. InProceedings of the 62nd Annual Meeting of the Association for Computational Linguistics
+(Volume 1: Long Papers), ACL 2024, Bangkok, Thailand, August 11-16, 2024, pages 12622–12642,
+2024. URL https://aclanthology.org/2024.acl-long.681.
+A. Fan, E. Grave, and A. Joulin. Reducing transformer depth on demand with structured dropout. In
+8th International Conference on Learning Representations, ICLR 2020, Addis Ababa, Ethiopia, April
+26-30, 2020, 2020. URLhttps://openreview.net/forum?id=SylO2yStDr.
+Y. Fan, Y. Du, K. Ramchandran, and K. Lee. Looped transformers for length generalization.arXiv
+preprint arXiv:2409.15647, 2024.
+W. Fedus, B. Zoph, and N. Shazeer. Switch transformers: Scaling to trillion parameter models
+with simple and efficient sparsity.J. Mach. Learn. Res., 23:120:1–120:39, 2022. URLhttps:
+//jmlr.org/papers/v23/21-0998.html.
+17
+
+===== PAGE 18 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+W.Feng,C.Hao,Y.Zhang,Y.Han,andH.Wang. Mixture-of-loras: Anefficientmultitasktuningmethod
+forlargelanguagemodels. In Proceedingsofthe2024JointInternationalConferenceonComputational
+Linguistics, Language Resources and Evaluation, LREC/COLING 2024, 20-25 May, 2024, Torino, Italy,
+pages 11371–11380, 2024. URLhttps://aclanthology.org/2024.lrec-main.994.
+J. Frankle and M. Carbin. The lottery ticket hypothesis: Finding sparse, trainable neural networks. In
+7th International Conference on Learning Representations, ICLR 2019, New Orleans, LA, USA, May
+6-9, 2019, 2019. URLhttps://openreview.net/forum?id=rJl-b3RcF7.
+Q. Fu, M. Cho, T. Merth, S. Mehta, M. Rastegari, and M. Najibi. Lazyllm: Dynamic token pruning for
+efficient long context LLM inference.CoRR, abs/2407.14057, 2024. doi: 10.48550/ARXIV.2407.
+14057.
+T. Gale, D. Narayanan, C. Young, and M. Zaharia. Megablocks: Efficient sparse training with mixture-
+of-experts. Proceedings of Machine Learning and Systems, 5:288–304, 2023.
+L. Gao, S. Biderman, S. Black, L. Golding, T. Hoppe, C. Foster, J. Phang, H. He, A. Thite, N. Nabeshima,
+et al. The pile: An 800gb dataset of diverse text for language modeling. arXiv preprint
+arXiv:2101.00027, 2020.
+L. Gao, J. Tow, B. Abbasi, S. Biderman, S. Black, A. DiPofi, C. Foster, L. Golding, J. Hsu, A. Le Noac’h,
+H. Li, K. McDonell, N. Muennighoff, C. Ociepa, J. Phang, L. Reynolds, H. Schoelkopf, A. Skowron,
+L. Sutawika, E. Tang, A. Thite, B. Wang, K. Wang, and A. Zou. A framework for few-shot language
+model evaluation, 12 2023.
+K. Gatmiry, N. Saunshi, S. J. Reddi, S. Jegelka, and S. Kumar. Can looped transformers learn to
+implement multi-step gradient descent for in-context learning?, 2024.
+T. Ge, S. Chen, and F. Wei. Edgeformer: A parameter-efficient transformer for on-device seq2seq
+generation. In Proceedings of the 2022 Conference on Empirical Methods in Natural Language
+Processing, EMNLP 2022, Abu Dhabi, United Arab Emirates, December 7-11, 2022, pages 10786–
+10798, 2022. doi: 10.18653/V1/2022.EMNLP-MAIN.741.
+J. Geiping, S. McLeish, N. Jain, J. Kirchenbauer, S. Singh, B. R. Bartoldson, B. Kailkhura, A. Bhatele,
+and T. Goldstein. Scaling up test-time compute with latent reasoning: A recurrent depth approach.
+arXiv preprint arXiv:2502.05171, 2025.
+A. Giannou, S. Rajput, J. Sohn, K. Lee, J. D. Lee, and D. Papailiopoulos. Looped transformers
+as programmable computers. InInternational Conference on Machine Learning, ICML 2023, 23-
+29 July 2023, Honolulu, Hawaii, USA, volume 202, pages 11398–11442, 2023. URLhttps:
+//proceedings.mlr.press/v202/giannou23a.html.
+P. Glorioso, Q. Anthony, Y. Tokpanov, J. Whittington, J. Pilault, A. Ibrahim, and B. Millidge. Zamba: A
+compact 7b SSM hybrid model.CoRR, abs/2405.16712, 2024. doi: 10.48550/ARXIV.2405.16712.
+S. Goyal, Z. Ji, A. S. Rawat, A. K. Menon, S. Kumar, and V. Nagarajan. Think before you speak:
+Training language models with pause tokens. InThe Twelfth International Conference on Learning
+Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024, 2024. URLhttps://openreview.
+net/forum?id=ph04CRkPdC.
+A. Graves. Adaptive computation time for recurrent neural networks.CoRR, abs/1603.08983, 2016a.
+URL http://arxiv.org/abs/1603.08983.
+A. Graves. Adaptive computation time for recurrent neural networks, 2016b.
+18
+
+===== PAGE 19 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Y. Gu, L. Dong, F. Wei, and M. Huang. Minillm: Knowledge distillation of large language models. In
+The Twelfth International Conference on Learning Representations, ICLR 2024, Vienna, Austria, May
+7-11, 2024, 2024. URLhttps://openreview.net/forum?id=5h0qf7IBZZ.
+Q. Guo, Z. Yu, Y. Wu, D. Liang, H. Qin, and J. Yan. Dynamic recursive neural network. InIEEE
+Conference on Computer Vision and Pattern Recognition, CVPR 2019, Long Beach, CA, USA, June
+16-20, 2019, pages 5147–5156, 2019. doi: 10.1109/CVPR.2019.00529.
+S. Han, J. Pool, J. Tran, and W. J. Dally. Learning both weights and connections for efficient neural
+networks. CoRR, abs/1506.02626, 2015. URLhttp://arxiv.org/abs/1506.02626.
+P. C. Hansen. The truncated svd as a method for regularization.BIT Numerical Mathematics, 27:
+534–553, 1987.
+S. Hao, S. Sukhbaatar, D. Su, X. Li, Z. Hu, J. Weston, and Y. Tian. Training large language models to
+reason in a continuous latent space.arXiv preprint arXiv:2412.06769, 2024.
+G. E. Hinton, O. Vinyals, and J. Dean. Distilling the knowledge in a neural network. CoRR,
+abs/1503.02531, 2015. URLhttp://arxiv.org/abs/1503.02531.
+J. Hoffmann, S. Borgeaud, A. Mensch, E. Buchatskaya, T. Cai, E. Rutherford, D. de Las Casas, L. A.
+Hendricks, J. Welbl, A. Clark, T. Hennigan, E. Noland, K. Millican, G. van den Driessche, B. Damoc,
+A. Guy, S. Osindero, K. Simonyan, E. Elsen, J. W. Rae, O. Vinyals, and L. Sifre. Training compute-
+optimal large language models, 2022. URLhttps://arxiv.org/abs/2203.15556.
+N. Houlsby, A. Giurgiu, S. Jastrzebski, B. Morrone, Q. de Laroussilhe, A. Gesmundo, M. Attariyan,
+and S. Gelly. Parameter-efficient transfer learning for NLP. InProceedings of the 36th International
+ConferenceonMachineLearning,ICML2019,9-15June2019,LongBeach,California,USA ,volume97,
+pages 2790–2799, 2019. URLhttp://proceedings.mlr.press/v97/houlsby19a.html.
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen. Lora: Low-
+rank adaptation of large language models. InThe Tenth International Conference on Learning
+Representations, ICLR 2022, Virtual Event, April 25-29, 2022, 2022. URLhttps://openreview.
+net/forum?id=nZeVKeeFYf9.
+B. Jacob, S. Kligys, B. Chen, M. Zhu, M. Tang, A. G. Howard, H. Adam, and D. Kalenichenko.
+Quantization and training of neural networks for efficient integer-arithmetic-only inference. In
+2018 IEEE Conference on Computer Vision and Pattern Recognition, CVPR 2018, Salt Lake City, UT,
+USA, June 18-22, 2018, pages 2704–2713, 2018. doi: 10.1109/CVPR.2018.00286.
+S. Kim, D. Kim, C. Park, W. Lee, W. Song, Y. Kim, H. Kim, Y. Kim, H. Lee, J. Kim, C. Ahn, S. Yang,
+S. Lee, H. Park, G. Gim, M. Cha, H. Lee, and S. Kim. SOLAR 10.7b: Scaling large language models
+with simple yet effective depth up-scaling. InProceedings of the 2024 Conference of the North
+American Chapter of the Association for Computational Linguistics: Human Language Technologies:
+Industry Track, NAACL 2024, Mexico City, Mexico, June 16-21, 2024, pages 23–35, 2024. doi:
+10.18653/V1/2024.NAACL-INDUSTRY.3.
+Y. Kim and A. M. Rush. Sequence-level knowledge distillation. InProceedings of the 2016 Conference
+on Empirical Methods in Natural Language Processing, EMNLP 2016, Austin, Texas, USA, November
+1-4, 2016, pages 1317–1327, 2016. doi: 10.18653/V1/D16-1139.
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica. Efficient
+memory management for large language model serving with pagedattention. InProceedings of the
+29th Symposium on Operating Systems Principles, SOSP 2023, Koblenz, Germany, October 23-26,
+2023, pages 611–626, 2023. doi: 10.1145/3600006.3613165.
+19
+
+===== PAGE 20 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Z. Lan, M. Chen, S. Goodman, K. Gimpel, P. Sharma, and R. Soricut. ALBERT: A lite BERT for
+self-supervised learning of language representations. In8th International Conference on Learning
+Representations, ICLR 2020, Addis Ababa, Ethiopia, April 26-30, 2020, 2020. URL https://
+openreview.net/forum?id=H1eA7AEtvS.
+Y. Leviathan, M. Kalman, and Y. Matias. Fast inference from transformers via speculative decoding. In
+International Conference on Machine Learning, ICML 2023, 23-29 July 2023, Honolulu, Hawaii, USA,
+volume 202, pages 19274–19286, 2023. URLhttps://proceedings.mlr.press/v202/
+leviathan23a.html.
+F. Liu, Y. Tang, Z. Liu, Y. Ni, K. Han, and Y. Wang. Kangaroo: Lossless self-speculative decoding via
+double early exiting.arXiv preprint arXiv:2404.18911, 2024a.
+X. Liu, K. Ji, Y. Fu, Z. Du, Z. Yang, and J. Tang. P-tuning v2: Prompt tuning can be comparable
+to fine-tuning universally across scales and tasks.CoRR, abs/2110.07602, 2021. URL https:
+//arxiv.org/abs/2110.07602.
+Z. Liu, J. Wang, T. Dao, T. Zhou, B. Yuan, Z. Song, A. Shrivastava, C. Zhang, Y. Tian, C. Ré, and
+B. Chen. Deja vu: Contextual sparsity for efficient llms at inference time. InInternational Conference
+on Machine Learning, ICML 2023, 23-29 July 2023, Honolulu, Hawaii, USA, volume 202, pages
+22137–22176, 2023. URLhttps://proceedings.mlr.press/v202/liu23am.html.
+Z. Liu, C. Zhao, F. N. Iandola, C. Lai, Y. Tian, I. Fedorov, Y. Xiong, E. Chang, Y. Shi, R. Krishnamoorthi,
+L. Lai, and V. Chandra. Mobilellm: Optimizing sub-billion parameter language models for on-device
+use cases. InForty-first International Conference on Machine Learning, ICML 2024, Vienna, Austria,
+July 21-27, 2024, 2024b. URLhttps://openreview.net/forum?id=EIGbXbxcUQ.
+I. Loshchilov and F. Hutter. SGDR: stochastic gradient descent with warm restarts. In5th International
+Conference on Learning Representations, ICLR 2017, Toulon, France, April 24-26, 2017, Conference
+Track Proceedings, 2017. URLhttps://openreview.net/forum?id=Skq89Scxx.
+I. Loshchilov and F. Hutter. Decoupled weight decay regularization. In7th International Conference
+on Learning Representations, ICLR 2019, New Orleans, LA, USA, May 6-9, 2019, 2019. URLhttps:
+//openreview.net/forum?id=Bkg6RiCqY7.
+S. M. McLeish and L. Tran-Thanh. [re] end-to-end algorithm synthesis with recurrent networks:
+Logical extrapolation without overthinking. InML Reproducibility Challenge 2022, 2022.
+F. Meng, Z. Wang, and M. Zhang. Pissa: Principal singular values and singular vectors adaptation of
+large language models.CoRR, abs/2404.02948, 2024. doi: 10.48550/ARXIV.2404.02948.
+X. Miao, G. Oliaro, Z. Zhang, X. Cheng, H. Jin, T. Chen, and Z. Jia. Towards efficient generative large
+language model serving: A survey from algorithms to systems.CoRR, abs/2312.15234, 2023. doi:
+10.48550/ARXIV.2312.15234.
+T. Mihaylov, P. Clark, T. Khot, and A. Sabharwal. Can a suit of armor conduct electricity? A new
+dataset for open book question answering. InProceedings of the 2018 Conference on Empirical
+Methods in Natural Language Processing, Brussels, Belgium, October 31 - November 4, 2018, pages
+2381–2391, 2018. doi: 10.18653/V1/D18-1260.
+J. Milbauer, A. Louis, M. J. Hosseini, A. Fabrikant, D. Metzler, and T. Schuster. LAIT: Efficient multi-
+segment encoding in transformers with layer-adjustable interaction. InProceedings of the 61st
+Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages
+10251–10269, July 2023. doi: 10.18653/v1/2023.acl-long.571.
+20
+
+===== PAGE 21 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+A. Mohtashami, M. Pagliardini, and M. Jaggi. Cotformer: More tokens with attention make up for
+less depth.arXiv preprint arXiv:2310.10845, 2023.
+OpenAI. GPT-4 technical report.CoRR, abs/2303.08774, 2023. doi: 10.48550/ARXIV.2303.08774.
+D. Paperno, G. Kruszewski, A. Lazaridou, Q. N. Pham, R. Bernardi, S. Pezzelle, M. Baroni, G. Boleda,
+and R. Fernández. The lambada dataset: Word prediction requiring a broad discourse context.
+arXiv preprint arXiv:1606.06031, 2016.
+J. Pfau, W. Merrill, and S. R. Bowman. Let’s think dot by dot: Hidden computation in transformer
+language models.arXiv preprint arXiv:2404.15758, 2024.
+R. Pope, S. Douglas, A. Chowdhery, J. Devlin, J. Bradbury, J. Heek, K. Xiao, S. Agrawal, and J. Dean.
+Efficiently scaling transformer inference. InProceedings of Machine Learning and Systems, vol-
+ume 5, pages 606–624, 2023. URL https://proceedings.mlsys.org/paper_files/
+paper/2023/file/c4be71ab8d24cdfb45e3d06dbfca2780-Paper-mlsys2023.pdf.
+J. W. Rae, A. Potapenko, S. M. Jayakumar, and T. P. Lillicrap. Compressive transformers for long-range
+sequence modelling.arXiv preprint arXiv:1911.05507, 2019.
+J. W. Rae, S. Borgeaud, T. Cai, K. Millican, J. Hoffmann, F. Song, J. Aslanides, S. Henderson, R. Ring,
+S. Young, E. Rutherford, T. Hennigan, J. Menick, A. Cassirer, R. Powell, G. van den Driessche, L. A.
+Hendricks, M. Rauh, P.-S. Huang, A. Glaese, J. Welbl, S. Dathathri, S. Huang, J. Uesato, J. Mellor,
+I. Higgins, A. Creswell, N. McAleese, A. Wu, E. Elsen, S. Jayakumar, E. Buchatskaya, D. Budden,
+E. Sutherland, K. Simonyan, M. Paganini, L. Sifre, L. Martens, X. L. Li, A. Kuncoro, A. Nematzadeh,
+E. Gribovskaya, D. Donato, A. Lazaridou, A. Mensch, J.-B. Lespiau, M. Tsimpoukelli, N. Grigorev,
+D. Fritz, T. Sottiaux, M. Pajarskas, T. Pohlen, Z. Gong, D. Toyama, C. de Masson d’Autume,
+Y. Li, T. Terzi, V. Mikulik, I. Babuschkin, A. Clark, D. de Las Casas, A. Guy, C. Jones, J. Bradbury,
+M. Johnson, B. Hechtman, L. Weidinger, I. Gabriel, W. Isaac, E. Lockhart, S. Osindero, L. Rimell,
+C. Dyer, O. Vinyals, K. Ayoub, J. Stanway, L. Bennett, D. Hassabis, K. Kavukcuoglu, and G. Irving.
+Scaling language models: Methods, analysis & insights from training gopher, 2021.
+S. Rajbhandari, J. Rasley, O. Ruwase, and Y. He. Zero: Memory optimizations toward training trillion
+parameter models. InSC20: International Conference for High Performance Computing, Networking,
+Storage and Analysis, pages 1–16. IEEE, 2020.
+V. Ramanujan, M. Wortsman, A. Kembhavi, A. Farhadi, and M. Rastegari. What’s hidden in a
+randomly weighted neural network? In2020 IEEE/CVF Conference on Computer Vision and Pattern
+Recognition, CVPR 2020, Seattle, WA, USA, June 13-19, 2020, pages 11890–11899, 2020. doi:
+10.1109/CVPR42600.2020.01191.
+D. Raposo, S. Ritter, B. A. Richards, T. P. Lillicrap, P. C. Humphreys, and A. Santoro. Mixture-of-depths:
+Dynamically allocating compute in transformer-based language models.CoRR, abs/2404.02258,
+2024. doi: 10.48550/ARXIV.2404.02258.
+J. Rasley, S. Rajbhandari, O. Ruwase, and Y. He. Deepspeed: System optimizations enable training
+deep learning models with over 100 billion parameters. InProceedings of the 26th ACM SIGKDD
+International Conference on Knowledge Discovery & Data Mining, pages 3505–3506, 2020.
+M. Reid, N. Savinov, D. Teplyashin, D. Lepikhin, T. P. Lillicrap, J. Alayrac, R. Soricut, A. Lazaridou,
+O. Firat, J. Schrittwieser, I. Antonoglou, R. Anil, S. Borgeaud, A. M. Dai, K. Millican, E. Dyer,
+M. Glaese, T. Sottiaux, B. Lee, F. Viola, M. Reynolds, Y. Xu, J. Molloy, J. Chen, M. Isard, P. Barham,
+T. Hennigan, R. McIlroy, M. Johnson, J. Schalkwyk, E. Collins, E. Rutherford, E. Moreira, K. Ayoub,
+21
+
+===== PAGE 22 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+M. Goel, C. Meyer, G. Thornton, Z. Yang, H. Michalewski, Z. Abbas, N. Schucher, A. Anand, R. Ives,
+J. Keeling, K. Lenc, S. Haykal, S. Shakeri, P. Shyam, A. Chowdhery, R. Ring, S. Spencer, E. Sezener,
+and et al. Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context.
+CoRR, abs/2403.05530, 2024. doi: 10.48550/ARXIV.2403.05530.
+M. Rivière, S. Pathak, P. G. Sessa, C. Hardin, S. Bhupatiraju, L. Hussenot, T. Mesnard, B. Shahriari,
+A. Ramé, J. Ferret, P. Liu, P. Tafti, A. Friesen, M. Casbon, S. Ramos, R. Kumar, C. L. Lan, S. Jerome,
+A. Tsitsulin, N. Vieillard, P. Stanczyk, S. Girgin, N. Momchev, M. Hoffman, S. Thakoor, J. Grill,
+B. Neyshabur, O. Bachem, A. Walton, A. Severyn, A. Parrish, A. Ahmad, A. Hutchison, A. Abdagic,
+A. Carl, A. Shen, A. Brock, A. Coenen, A. Laforge, A. Paterson, B. Bastian, B. Piot, B. Wu, B. Royal,
+C. Chen, C. Kumar, C. Perry, C. Welty, C. A. Choquette-Choo, D. Sinopalnikov, D. Weinberger,
+D. Vijaykumar, D. Rogozinska, D. Herbison, E. Bandy, E. Wang, E. Noland, E. Moreira, E. Senter,
+E. Eltyshev, F. Visin, G. Rasskin, G. Wei, G. Cameron, G. Martins, H. Hashemi, H. Klimczak-
+Plucinska, H. Batra, H. Dhand, I. Nardini, J. Mein, J. Zhou, J. Svensson, J. Stanway, J. Chan, J. P.
+Zhou, J. Carrasqueira, J. Iljazi, J. Becker, J. Fernandez, J. van Amersfoort, J. Gordon, J. Lipschultz,
+J. Newlan, J. Ji, K. Mohamed, K. Badola, K. Black, K. Millican, K. McDonell, K. Nguyen, K. Sodhia,
+K. Greene, L. L. Sjösund, L. Usui, L. Sifre, L. Heuermann, L. Lago, and L. McNealus. Gemma
+2: Improving open language models at a practical size. CoRR, abs/2408.00118, 2024. doi:
+10.48550/ARXIV.2408.00118.
+J. S. Rosenfeld, A. Rosenfeld, Y. Belinkov, and N. Shavit. A constructive prediction of the generalization
+error across scales. InInternational Conference on Learning Representations, 2020. URLhttps:
+//openreview.net/forum?id=ryenvpEKDr.
+K. Sakaguchi, R. L. Bras, C. Bhagavatula, and Y. Choi. Winogrande: An adversarial winograd schema
+challenge at scale. InThe Thirty-Fourth AAAI Conference on Artificial Intelligence, AAAI 2020, The
+Thirty-Second Innovative Applications of Artificial Intelligence Conference, IAAI 2020, The Tenth AAAI
+Symposium on Educational Advances in Artificial Intelligence, EAAI 2020, New York, NY, USA, February
+7-12, 2020, pages 8732–8740, 2020. doi: 10.1609/AAAI.V34I05.6399.
+N. Saunshi, S. Karp, S. Krishnan, S. Miryoosefi, S. J. Reddi, and S. Kumar. On the inductive bias of
+stacking towards improving reasoning, 2024.
+P. Savarese and M. Maire. Learning implicitly recurrent cnns through parameter sharing. In7th
+International Conference on Learning Representations, ICLR 2019, New Orleans, LA, USA, May 6-9,
+2019, 2019. URLhttps://openreview.net/forum?id=rJgYxn09Fm.
+T. Schuster, A. Fisch, T. Jaakkola, and R. Barzilay. Consistent accelerated inference via confident
+adaptive transformers. In Proceedings of the 2021 Conference on Empirical Methods in Natural
+Language Processing, pages 4962–4979, Nov. 2021. doi: 10.18653/v1/2021.emnlp-main.406.
+T. Schuster, A. Fisch, J. Gupta, M. Dehghani, D. Bahri, V. Tran, Y. Tay, and D. Metzler. Confident adap-
+tive language modeling. InAdvances in Neural Information Processing Systems 35: Annual Conference
+on Neural Information Processing Systems 2022, NeurIPS 2022, New Orleans, LA, USA, November
+28 - December 9, 2022, 2022. URLhttp://papers.nips.cc/paper_files/paper/2022/
+hash/6fac9e316a4ae75ea244ddcef1982c71-Abstract-Conference.html.
+A. Schwarzschild, E. Borgnia, A. Gupta, F. Huang, U. Vishkin, M. Goldblum, and T. Gold-
+stein. Can you learn an algorithm? generalizing from easy to hard problems with recur-
+rent networks. In Advances in Neural Information Processing Systems 34: Annual Conference
+on Neural Information Processing Systems 2021, NeurIPS 2021, December 6-14, 2021, virtual,
+pages 6695–6706, 2021. URLhttps://proceedings.neurips.cc/paper/2021/hash/
+3501672ebc68a5524629080e3ef60aef-Abstract.html.
+22
+
+===== PAGE 23 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+N. Shazeer. Fast transformer decoding: One write-head is all you need.CoRR, abs/1911.02150, 2019.
+URL http://arxiv.org/abs/1911.02150.
+N. Shazeer. GLU variants improve transformer.CoRR, abs/2002.05202, 2020. URLhttps://arxiv.
+org/abs/2002.05202.
+Z. Shen, Z. Liu, and E. P. Xing. Sliced recursive transformer. InComputer Vision - ECCV 2022: 17th
+European Conference, Tel Aviv, Israel, October 23-27, 2022, Proceedings, Part XXIV, volume 13684,
+pages 727–744, 2022. doi: 10.1007/978-3-031-20053-3\_42.
+Y. Sheng, S. Cao, D. Li, C. Hooper, N. Lee, S. Yang, C. Chou, B. Zhu, L. Zheng, K. Keutzer, J. E. Gonzalez,
+and I. Stoica. S-lora: Serving thousands of concurrent lora adapters.CoRR, abs/2311.03285, 2023.
+doi: 10.48550/ARXIV.2311.03285.
+A. Sherstinsky. Fundamentals of recurrent neural network (RNN) and long short-term memory
+(LSTM) network. CoRR, abs/1808.03314, 2018. URLhttp://arxiv.org/abs/1808.03314.
+K.Shim, J.Lee, andH.Kim. Leveragingadapterforparameter-efficientasrencoder. In Proc.Interspeech
+2024, pages 2380–2384, 2024.
+D. Soboleva, F. Al-Khateeb, R. Myers, J. R. Steeves, J. Hestness, and N. Dey. SlimPajama: A 627B
+token cleaned and deduplicated version of RedPajama.https://www.cerebras.net/blog/
+slimpajama-a-627b-token-cleaned-and-deduplicated-version-of-redpajama ,
+2023. URL https://huggingface.co/datasets/cerebras/SlimPajama-627B.
+Y. Sun, L. Dong, Y. Zhu, S. Huang, W. Wang, S. Ma, Q. Zhang, J. Wang, and F. Wei. You only cache
+once: Decoder-decoder architectures for language models.CoRR, abs/2405.05254, 2024. doi:
+10.48550/ARXIV.2405.05254.
+S. Takase and S. Kiyono. Lessons on parameter sharing across layers in transformers. InProceedings of
+The Fourth Workshop on Simple and Efficient Natural Language Processing, SustaiNLP 2023, Toronto,
+Canada (Hybrid), July 13, 2023, pages 78–90, 2023. doi: 10.18653/V1/2023.SUSTAINLP-1.5.
+P. Tang, P. Zhu, T. Li, S. Appalaraju, V. Mahadevan, and R. Manmatha. DEED: dynamic early exit on
+decoder for accelerating encoder-decoder transformer models. InFindings of the Association for
+Computational Linguistics: NAACL 2024, Mexico City, Mexico, June 16-21, 2024, pages 116–131,
+2024. doi: 10.18653/V1/2024.FINDINGS-NAACL.9.
+G. Team, T. Mesnard, C. Hardin, R. Dadashi, S. Bhupatiraju, S. Pathak, L. Sifre, M. Rivière, M. S.
+Kale, J. Love, et al. Gemma: Open models based on gemini research and technology.arXiv preprint
+arXiv:2403.08295, 2024.
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin.
+Attention is all you need.Advances in neural information processing systems, 30, 2017.
+Z. Wan, X. Wang, C. Liu, S. Alam, Y. Zheng, J. Liu, Z. Qu, S. Yan, Y. Zhu, Q. Zhang, M. Chowdhury,
+and M. Zhang. Efficient large language models: A survey.Trans. Mach. Learn. Res., 2024, 2024.
+URL https://openreview.net/forum?id=bsCCJHbO8A.
+H. Wang, T. Sun, C. Jin, Y. Wang, Y. Fan, Y. Xu, Y. Du, and C. Fan. Customizable combination of
+parameter-efficient modules for multi-task learning. InThe Twelfth International Conference on
+Learning Representations, 2023.
+23
+
+===== PAGE 24 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Y. Wen, Z. Li, W. Du, and L. Mou. f-divergence minimization for sequence-level knowledge distillation.
+In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1:
+Long Papers), pages 10817–10834, July 2023. doi: 10.18653/v1/2023.acl-long.605.
+T.Wolf, L.Debut, V.Sanh, J.Chaumond, C.Delangue, A.Moi, P.Cistac, T.Rault, R.Louf, M.Funtowicz,
+et al. Transformers: State-of-the-art natural language processing. In Proceedings of the 2020
+conference on empirical methods in natural language processing: system demonstrations, pages 38–45,
+2020.
+Y. Xia, T. He, X. Tan, F. Tian, D. He, and T. Qin. Tied transformers: Neural machine translation with
+sharedencoderanddecoder. In TheThirty-ThirdAAAIConferenceonArtificialIntelligence, AAAI2019,
+The Thirty-First Innovative Applications of Artificial Intelligence Conference, IAAI 2019, The Ninth
+AAAI Symposium on Educational Advances in Artificial Intelligence, EAAI 2019, Honolulu, Hawaii, USA,
+January 27 - February 1, 2019, pages 5466–5473, 2019. doi: 10.1609/AAAI.V33I01.33015466.
+L.Yang,K.Lee,R.D.Nowak,andD.Papailiopoulos. Loopedtransformersarebetteratlearninglearning
+algorithms. InThe Twelfth International Conference on Learning Representations, ICLR 2024, Vienna,
+Austria, May 7-11, 2024, 2024. URLhttps://openreview.net/forum?id=HHbRxoDTxE.
+G. Yu, J. S. Jeong, G. Kim, S. Kim, and B. Chun. Orca: A distributed serving system for transformer-
+based generative models. In 16th USENIX Symposium on Operating Systems Design and Im-
+plementation, OSDI 2022, Carlsbad, CA, USA, July 11-13, 2022, pages 521–538, 2022. URL
+https://www.usenix.org/conference/osdi22/presentation/yu.
+R. Zellers, A. Holtzman, Y. Bisk, A. Farhadi, and Y. Choi. Hellaswag: Can a machine really finish your
+sentence? arXiv preprint arXiv:1905.07830, 2019.
+D. Zeng, N. Du, T. Wang, Y. Xu, T. Lei, Z. Chen, and C. Cui. Learning to skip for language modeling.
+CoRR, abs/2311.15436, 2023. doi: 10.48550/ARXIV.2311.15436.
+B. Zhang and R. Sennrich. Root mean square layer normalization. In Advances in Neu-
+ral Information Processing Systems 32: Annual Conference on Neural Information Process-
+ing Systems 2019, NeurIPS 2019, December 8-14, 2019, Vancouver, BC, Canada , pages
+12360–12371, 2019. URL https://proceedings.neurips.cc/paper/2019/hash/
+1e8a19426224ca89e83cef47f1e7f53b-Abstract.html.
+J. Zhang, J. Wang, H. Li, L. Shou, K. Chen, G. Chen, and S. Mehrotra. Draft& verify: Lossless large
+language model acceleration via self-speculative decoding. InProceedings of the 62nd Annual
+Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), ACL 2024, Bangkok,
+Thailand, August 11-16, 2024, pages 11263–11282, 2024a. URLhttps://aclanthology.org/
+2024.acl-long.607.
+P. Zhang, G. Zeng, T. Wang, and W. Lu. Tinyllama: An open-source small language model, 2024b.
+Z. Zhou, X. Ning, K. Hong, T. Fu, J. Xu, S. Li, Y. Lou, L. Wang, Z. Yuan, X. Li, S. Yan, G. Dai,
+X. Zhang, Y. Dong, and Y. Wang. A survey on efficient inference for large language models.CoRR,
+abs/2404.14294, 2024. doi: 10.48550/ARXIV.2404.14294.
+24
+
+===== PAGE 25 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+A. Components in Transformer Architecture
+TheTransformerblockconsistsoftwocorecomponents: amulti-headattention(MHA)mechanismand
+a feed-forward network (FFN). MHA utilizes multiple attention heads to capture diverse relationships
+within the input sequence. The computation within each attention head is formulated as:
+Attention(Q,K,V) = softmax
+QK𝑇
+√
+𝑑𝑘
+
+V,
+where Q, K, andV are linear projections of the input, parameterized by learned weight matricesW𝑄
+ℓ,
+W𝐾
+ℓ, andW𝑉
+ℓ, respectively. The outputs from each head of the multi-head attention are concatenated
+and then projected back to the original hidden size using a learned weight matrixW𝑜𝑢𝑡
+ℓ .
+While the FFN structure typically consists of two linear transformations, in the Gemma model, it
+deviates from this standard architecture as follows:
+FFN(x) = W𝑑𝑜𝑤𝑛
+ℓ (GELU(xW𝑔𝑎𝑡𝑒
+ℓ ) ∗ xW𝑢𝑝
+ℓ )
+with three learned linear weight matrices and a GeGLU activation (Shazeer, 2020).
+B. Parameter Sharing Strategy
+Takase and Kiyono (2023) discuss three strategies for partial layer tying in Transformer models, as
+depicted in FigureB.1. The SEQUENE strategy is the simplest, assigning the same parameters to
+consecutive layers. The CYCLE strategy repeatedly stacks a single block of unique layers to achieve
+the desired depth. Meanwhile, the CYCLE (REV) strategy stacks the lower layers in reverse order for
+the remaining layers.
+In the comparative analysis of SEQUENCE and CYCLE strategies (Liu et al., 2024b), CYCLE
+demonstrated marginally superior zero-shot performance. Although the SEQUENCE approach, which
+caches shared weights (the capacity of SRAM is typically sufficient to hold a single transformer block)
+and computes them iteratively, has the potential to mitigate the weight transfer bottleneck between
+SRAM and DRAM, we prioritized compatibility with early-exiting. Consequently, we specifically
+employed the CYCLE strategy, which enables continuous depth-wise batching and thereby maximizes
+the throughput of Recursive Transformers.
+Layer 1Layer 2Layer 3Layer 4Layer 5Layer 6
+(a) SEQUENCE
+Layer 1Layer 2Layer 3Layer 4Layer 5Layer 6 (b) CYCLE
+Layer 1Layer 2Layer 3Layer 4Layer 5Layer 6 (c) CYCLE(REV)
+Figure B.1 | Three strategies for parameter sharing (Takase and Kiyono, 2023). The examples utilize
+models with six layers, where identical colors represent shared weights.
+25
+
+===== PAGE 26 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+C. Illustrative Examples of SVD Initialization in Relaxed Recursive Transformer
+We propose an SVD initialization approach for LoRA modules within a Relaxed Recursive Transformer,
+effectively steering the summation of base and LoRA weights towards the pretrained weights of their
+corresponding depth. FigureC.1 illustrates an overview of how the LoRA module is initialized under
+three different initialization techniques (Stepwise, Average, and Lower) for looped layers. One crucial
+point is that if the initialized looped layer’s weights match those of the original pretrained model, its
+corresponding LoRA module undergoes standard zero initialization: random Gaussian for matrixA
+and zero forB. For example, with the Stepwise method, the first loop’s LoRA module receives standard
+zero initialization, while the second loop’s LoRA is initialized using our proposed initialization.
+Layer 1Layer 2Layer 3Layer 4Layer 5Layer 6
+Layer 1, 4
+Layer 2, 5
+Layer 3, 6×2
+Layer 1Layer 3Layer 6×2
+Layer 1Layer 2Layer 3×2
+Stepwise-basedAverage-basedLower-based
+Figure C.1 | We visualize LoRA modules to show which residual matrices they target for initialization
+under three different looping initialization methods, assuming a full-size model with six layers and
+two looping blocks. For ease of understanding,A matrices are colored according to the full-size model
+weights at the corresponding depth, whileB matrices are colored based on the looped layer weights.
+White B matrices indicate cases where the full-size model and looped model weights are identical,
+resulting in standard zero initialization.
+D. Overview of Three Pretrained LLMs
+We utilized three pretrained models—Gemma 2B(Team et al., 2024), TinyLlama 1.1B(Zhang et al.,
+2024b), and Pythia 1B(Biderman et al., 2023)—and converted them into Recursive Transformers.
+Their corresponding few-shot performance results are presented in TableD.1.
+Few-shot Accuracy↑
+Models N-emb Dataset 𝑁𝑡𝑜𝑘𝑒𝑛 LD HS PQ WG ARC-e ARC-c OB Avg
+Gemma2B 1.99B Unreleased 3T 63.13 71.38 78.13 65.04 72.26 41.89 40.20 61.72
+TinyLlama1.1B 0.97B SlimPajama+
+105B 43.26 42.23 66.81 53.35 44.74 23.21 29.20 43.26
+Starcoderdata
+503B 48.92 49.56 69.42 55.80 48.32 26.54 31.40 47.14
+1T 53.00 52.52 69.91 55.96 52.36 27.82 33.40 49.28
+2T 53.33 54.63 70.67 56.83 54.67 28.07 33.40 50.23
+3T 58.82 59.20 73.29 59.12 55.35 30.12 36.00 53.13
+Pythia1B 0.81B Pile 300B 57.52 49.10 70.40 52.80 51.89 26.71 33.40 48.83
+Table D.1| Few-shot performance of three pretrained models. Few-shot accuracy is measured on the
+LAMBADA, HellaSwag, PIQA, WinoGrande, ARC-easy, ARC-challenge, and OpenBookQA benchmarks.
+We evaluated intermediate checkpoints up to the fully trained checkpoint for TinyLlama 1.1B. Among
+these, we utilized the 105B intermediate checkpoint to study an under-trained model.
+26
+
+===== PAGE 27 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+This diversity offers several benefits. First, with three versions of recursive models, we can compare
+their performance based on the number of trainable parameters. Notably, the comparison between
+the recursive Gemma and the pretrained TinyLlama and Pythia models highlights that leveraging
+well-trained model weights can lead to a superior Recursive Transformer of equivalent size, even with
+substantially lower uptraining costs. Second, by utilizing models ranging from under-trained (e.g.,
+TinyLlama) to significantly over-trained (e.g., Gemma), we can gain insights into the uptraining costs
+required for Recursive Transformers to closely match the performance of pretrained models. Finally,
+the diversity in pretraining datasets allows us to observe how Recursive Transformers perform when
+faced with distribution shifts in the uptraining dataset. Table2 presents the evaluation results obtained
+after uptraining each of the pretrained models. While TinyLlama readily improves its performance
+due to uptraining on the same dataset, Gemma and Pythia show a decline in few-shot performance
+with SlimPajama uptraining, which can be attributed to the differences in data distribution and the
+lower quality of the uptraining dataset.
+E. Experimental Setup
+Uptraining setting To convert vanilla Transformers into Recursive Transformers, we conducted
+further uptraining on either 15 billion or 60 billion tokens from the SlimPajama dataset(Soboleva
+et al., 2023). SlimPajama is an open-source dataset designed for training large language models,
+which is created by cleaning and deduplicating the RedPajama dataset(Computer, 2023). The source
+data primarily consists of web-crawled data, along with data from Github, books, Arxiv, Wikipedia,
+and StackExchange. We employed the HuggingFace training framework(Wolf et al., 2020) and
+enhanced memory efficiency through the Zero Redundancy Optimizer (ZeRO)(Rajbhandari et al.,
+2020) from the DeepSpeed library(Rasley et al., 2020), along with mixed precision training. The
+context length was set to 2048, and the batch size was approximately 2 million tokens. We used
+the AdamW optimizer(Loshchilov and Hutter, 2019) with a learning rate of 2e-4, utilizing a cosine
+annealing learning rate scheduler (Loshchilov and Hutter, 2017). Additionally, we set warmup steps
+to 200 for 15 billion token training and 800 for 60 billion token training. Eight H100 GPUs were used
+for the training.
+Early-exit training setting Similar to the uptraining process, we used the SlimPajama dataset
+to enable models to predict next tokens at intermediate loops. Models with two looping blocks
+underwent additional training on a total of two exit points, whereas models with three blocks were
+trained on three exit points. We explored various strategies, but by default, we continued training
+on an additional 15 billion tokens (SlimPajama dataset), starting from the uptrained Recursive
+Transformers. We also utilized eight H100 GPUs and maintained consistent configurations with the
+uptraining settings, including batch size, context length, and learning rates.
+Evaluation setting We evaluated perplexity on test sets from three language modeling datasets:
+SlimPajama, RedPajama, and PG19(Rae et al., 2019). Additionally, we used the Language Model
+Evaluation Harness framework(Gao et al., 2023) to evaluate accuracy on seven few-shot tasks:
+LAMBADA(Paperno et al., 2016), HellaSwag(Zellers et al., 2019), PIQA(Bisk et al., 2020), Wino-
+Grande(Sakaguchi et al., 2020), ARC-easy and ARC-challenge(Clark et al., 2018), and Open-
+BookQA(Mihaylov et al., 2018). We adhered to the standard number of shots specified by the
+evaluation framework for each dataset. For few-shot datasets, excluding LAMBADA and WinoGrande,
+we normalized accuracy by the byte length of the target string. All evaluation performance measure-
+ments were conducted using a single H100 GPU.
+27
+
+===== PAGE 28 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Throughput measurement settings To present the hypothetical generation speeds of our Recursive
+Transformers, we prepared two key elements: per-token generation time and exit trajectory datasets.
+Firstly, we measured the generation time under various model configurations using dummy weights
+and inputs. We measured the time for each component, such as embedding matrices, Transformer
+blocks, and the classifier head (final throughput comparisons were based solely on the time spent
+within Transformer blocks.) We tested two settings of prefix and decoding lengths (512/2048 and
+64/256), calculating the per-token time by dividing the total elapsed time by the decoding length.
+Using a single A100 40GB GPU, we recorded these decoding times across different batch sizes, until
+an out-of-memory error occurred or under a specific memory constraint was reached.
+To obtain exit trajectory data, we assumed an oracle-exiting approach, where all tokens could exit
+at intermediate loops if intermediate predictions matched the final loop’s prediction. Since our models
+are not finetuned on any specific downstream tasks, we did simulation with three language modeling
+datasets (SlimPajama, RedPajama, and PG19) as if they were generated by our models. For simplicity,
+we assumed a queue of 20K samples, rather than considering their arrival in static or dynamic time
+intervals. We then recorded the exit loop of each token in these samples using the oracle-exiting
+algorithm. With these two measurement (per-token generation time and exit trajectories), we present
+the hypothetical throughput of Recursive Transformers under various simulation scenarios.
+F. Expanded Results of Initialization Methods for Looped Layers
+Ablation study of Stepwise methodWe initially hypothesized that the Stepwise method’s perfor-
+mance could be significantly influenced by the specific rule used for layer selection from the pretrained
+model. To investigate this, we conducted a controlled experiment (illustrated in FigureF.1a), where
+layers were selected at certain intervals starting from the first layer. We then varied whether the
+final layer of the pretrained model was included in the initialization or not. While a Pythia model
+showed no significant differences in training loss or few-shot performance, other models like Gemma
+exhibited superior results when both the first and last layers were preserved. This observation aligns
+well with prior work suggesting that maintaining the weights of the first and last layers during depth
+up-scaling for LLMs can yield performance benefits (Kim et al., 2024).
+Ablation study of Average method The Average initialization method exhibited notably poor
+performance, particularly when applied to the Gemma model. We hypothesized that this could be
+attributed to instability in the model’s learned distribution, potentially arising from averaging of
+normalization layer weights. Relatedly, several studies (Csordás et al., 2024; Mohtashami et al., 2023;
+Shim et al., 2024) have explored the careful design of layer normalization in parameter-shared models.
+To investigate this further, we experimented with three different methods for initializing normalization
+weights,asoutlinedinFigureF.1b: averagingweights(Norm-avg),selectingweightsfromasinglelayer
+(Norm-choice), and zero initialization (Norm-zero). The performance trend observed among these
+methods varied across different model architectures. However, zero initialization of normalization
+layers resulted in a huge performance drop in certain architectures like TinyLlama and Pythia.
+Conversely, we observed no big difference between averaging and single-layer selection, suggesting
+that any form of distillation of the normalization weights appears to be sufficient for maintaining
+performance.
+28
+
+===== PAGE 29 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Gemma TinyLlama Pythia
+Fixed-ends
+Fixed-start
+Training Loss
+2.3
+2.5
+2.7
+2.9
+# of Tokens
+0B 5B 10B 15B
+(a) Stepwise ablations
+Norm-avg
+Norm-choice
+Norm-zero
+2.3
+2.7
+3.1
+3.5
+3.9
+# of Tokens
+0B 5B 10B 15B (b) Average ablations
+Figure F.1| Training loss curves of Stepwise and Average initialization variants across three models
+with two blocks.(a)“Fixed-start” indicates that the first layer of the pretrained model is selected
+initially, and subsequent layers are repeatedly chosen at a fixed interval. “Fixed-ends” means that
+the first and last layers are included, and intermediate layers are selected at specific step intervals.
+(b) When initializing the weights of normalization layer (RMSNorm in Gemma and TinyLlama, and
+LayerNorm in Pythia), we consider whether to average the weights(Norm-avg), select a single layer’s
+weights(Norm-choice), or use zero initialization(Norm-zero).
+Overall comparison of training perplexityFigureF.2 presents a comparative analysis of training
+loss across three model architectures and varying looping blocks, incorporating our proposed initial-
+ization methodologies. To set an upper bound on performance, we utilized a full-size model further
+uptrained on SlimPajama, accounting for the distribution shift between uptraining and pretraining
+data. Additionally, we trained a Recursive Transformer with a random initialization, ensuring its
+exclusive reliance on the recursive architecture without leveraging any pretrained weights. While
+some variance was observed across architectures, all proposed methods utilizing pretrained model
+weights demonstrated significantly superior performance compared to random initialization. Notably,
+the Stepwise method consistently achieved the best performance across diverse settings. Although the
+full-size model’s performance was considerably higher, bridging this gap with only 15 billion tokens
+of uptraining represents a remarkable achievement.
+Full-size Stepwise Average Lower Random
+Training Loss
+2.2
+2.6
+3.0
+3.4
+# of Tokens
+0B 5B 10B 15B
+(a) Gemma (2 blocks)
+2.2
+2.6
+3.0
+3.4
+3.8
+# of Tokens
+0B 5B 10B 15B (b) Gemma (3 blocks)
+2.2
+2.6
+3.0
+3.4
+3.8
+# of Tokens
+0B 5B 10B 15B (c) TinyLlama (2 blocks)
+2.2
+2.6
+3.0
+3.4
+3.8
+# of Tokens
+0B 5B 10B 15B (d) Pythia (2 blocks)
+Figure F.2| Training loss curves of Recursive Transformers using various initialization. We omitted a
+separate curve for the full-size TinyLlama model, as we used the original pretrained model as the
+full-size baseline because both pretraining and uptraining datasets are same as SlimPajama.
+29
+
+===== PAGE 30 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Overall comparison of few-shot performanceFew-shot performance exhibited a consistent trend
+with training perplexity. TableF.1 provides a comparative summary of the proposed looping initial-
+ization methods against the full-size model, the reduced-size model, and Recursive Transformers
+utilizing random initialization. Moreover, FigureF.3 visually illustrates the performance differences
+across different few-shot datasets. Notably, the Stepwise method consistently demonstrated the
+best performance, showing a performance improvement of up to 14.1%p compared to random
+initialization.
+Uptrain Looping Perplexity↓ Few-shot Accuracy↑
+Models N-embPT 𝑁𝑡𝑜𝑘 Block Init SlimP RedP PG19 LD HS PQ WG ARC-e ARC-c OB Avg Δ
+Gemma
+1.99B ✓ 15B - - 10.76 8.47 13.08 63.5 68.5 77.0 63.5 67.6 38.1 42.6 60.1 -
+0.99B ✗ 15B - - 22.63 20.03 32.6028.9 31.6 63.1 52.3 41.2 22.5 27.8 38.2 -
+0.66B ✗ 15B - - 24.44 21.69 36.0327.2 30.6 63.8 50.5 40.6 22.0 27.0 37.4 -
+0.99B ✓ 15B 2 Step 12.8510.2916.21 53.0 57.3 73.256.2 56.1 29.2 36.6 51.7+14.1
+0.99B ✓ 15B 2 Avg 15.15 12.57 19.8643.6 47.4 70.4 52.6 50.5 27.8 34.4 46.7 +9.1
+0.99B ✓ 15B 2 Lower 15.03 12.46 19.6342.5 48.0 71.0 54.6 52.2 27.7 33.8 47.1 +9.5
+0.99B ✗ 15B 2 Rand 22.66 20.06 32.8627.4 31.6 63.4 50.5 39.7 21.9 28.8 37.6 -
+0.66B ✓ 15B 3 Step 14.7512.1019.32 45.0 49.9 69.855.8 52.7 27.9 33.6 47.8 +9.9
+0.66B ✓ 15B 3 Avg 17.45 14.65 23.6339.4 39.0 66.6 48.7 46.5 24.7 31.8 42.4 +4.5
+0.66B ✓ 15B 3 Lower 15.96 13.24 20.9041.9 43.2 70.0 52.6 49.5 26.6 31.6 45.0 +7.1
+0.66B ✗ 15B 3 Rand 22.67 20.09 32.7728.1 31.4 63.8 51.1 41.0 23.0 26.6 37.9 -
+0.97B ✓ - - - 12.26 9.37 11.94 43.3 42.2 66.8 53.4 44.7 23.2 29.2 43.3 -
+0.48B ✗ 15B - - 16.61 15.66 20.2722.3 30.0 60.9 50.6 37.0 23.0 28.0 36.0 -
+TinyLlama0.48B ✓ 15B 2 Step 11.61 9.8913.00 39.6 39.866.552.9 44.3 24.9 30.6 42.7 +6.2
+0.48B ✓ 15B 2 Avg 11.86 10.29 13.4238.6 39.4 66.1 52.8 42.7 25.4 30.6 42.2 +5.7
+0.48B ✓ 15B 2 Lower 14.67 12.67 16.6831.9 32.3 62.6 52.0 39.1 22.1 27.8 38.3 +1.8
+0.48B ✗ 15B 2 Rand 16.14 15.11 19.5524.7 30.7 61.2 50.6 36.4 22.6 29.2 36.5 -
+0.81B ✓ 15B - - 13.46 9.95 13.38 55.0 49.0 71.0 53.6 51.8 28.2 32.8 48.8 -
+0.40B ✗ 15B - - 25.69 20.00 32.0824.3 30.0 61.9 50.7 38.3 22.3 26.0 36.2 -
+Pythia 0.40B ✓ 15B 2 Step 16.3812.3717.74 43.4 40.5 67.4 50.8 46.3 25.7 30.0 43.5 +7.3
+0.40B ✓ 15B 2 Avg 16.76 12.76 18.6343.6 39.1 68.2 51.9 45.4 25.1 29.8 43.3 +7.1
+0.40B ✓ 15B 2 Lower 17.04 12.62 18.4443.9 39.2 66.353.4 45.4 25.8 31.243.6 +7.4
+0.40B ✗ 15B 2 Rand 24.45 18.93 29.6325.2 30.2 62.1 51.1 39.2 22.4 23.6 36.2 -
+Table F.1| Evaluation results of various initialization methods for looped layers. We indicate whether
+pretrained weights are used and the number of uptraining tokens. Perplexity is evaluated on test sets
+of three language modeling datasets, and accuracy is evaluated on seven few-shot benchmarks. Delta
+values( Δ) show improvements over random initialization.
+30
+
+===== PAGE 31 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Stepwise
+Average
+Lower
+Random
+Accuracy
+0
+20
+40
+60
+80
+Average LAMBADA HellaSwag PIQA WinoGrande ARC-easy ARC-challengeOpenBookQA
+(a) Recursive Gemma with 2 blocks
+Stepwise
+Average
+Lower
+Random
+Accuracy
+0
+20
+40
+60
+80
+Average LAMBADA HellaSwag PIQA WinoGrande ARC-easy ARC-challengeOpenBookQA
+(b) Recursive Gemma with 3 blocks
+Stepwise
+Average
+Lower
+Random
+Accuracy
+0
+20
+40
+60
+80
+Average LAMBADA HellaSwag PIQA WinoGrande ARC-easy ARC-challengeOpenBookQA
+(c) Recursive TinyLlama with 2 blocks
+Stepwise
+Average
+Lower
+Random
+Accuracy
+0
+20
+40
+60
+80
+Average LAMBADA HellaSwag PIQA WinoGrande ARC-easy ARC-challengeOpenBookQA
+(d) Recursive Pythia with 2 blocks
+Figure F.3| Few-shot performance on seven benchmarks and their average accuracy based on four
+looping initialization methods. Full-size model performance is represented by a gray dotted line.
+31
+
+===== PAGE 32 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Comparison across various base model sizesWe observed a consistent superiority of Stepwise
+initialization strategy for recursive conversion across both 1B and 2B model scales. To further evaluate
+onawiderangeofbasemodelsizes,weadditionallyexperimentedwithtwosmallermodelsizes,Pythia
+410M and 160M. Since we uptrained models on the Pile dataset (Gao et al., 2020), the pretraining
+corpus of the original Pythia model, we set the original model performance as the baseline for
+comparison. The results in Table F.2 further validate the superior performance of the Stepwise method
+forloopedlayerinitialization. Thesefindingsreinforcetherobustnessofourkeyobservationsregarding
+initialization methods for recursive conversion, complementing our original extensive experiments.
+Uptrain Looping PPL ↓ Few-shot Accuracy↑
+N-emb PT 𝑁𝑡𝑜𝑘 Block Init Pile LD HS PQ WG ARC-e ARC-c OB Avg
+300M ✓ - - - - 44.96 40.97 66.97 53.28 44.40 25.51 30.20 43.76
+150M ✓ 15B 2 Step 11.03 43.41 35.59 64.58 53.04 41.58 23.81 28.80 41.54
+150M ✓ 15B 2 Lower 11.47 42.98 34.32 63.93 52.41 42.34 24.15 25.00 40.73
+150M ✓ 15B 2 Avg 11.55 39.84 34.17 64.31 52.25 41.04 24.66 26.60 40.41
+85M ✓ - - - - 13.53 30.67 58.22 48.62 36.62 25.00 28.60 34.47
+43M ✓ 15B 2 Step 15.93 21.02 29.28 60.01 48.93 37.92 23.98 28.00 35.59
+43M ✓ 15B 2 Lower 16.19 21.46 29.61 59.90 50.67 38.52 22.95 28.00 35.87
+43M ✓ 15B 2 Avg 16.12 22.36 29.07 60.17 49.96 37.24 23.29 26.60 35.53
+Table F.2| Comparison between initialization methods for looped layers on Pythia 410M and 160M.
+Uptraining was performed using the Pile dataset, which was also used for pretraining the original
+Pythia model. In light of the inherent randomness in few-shot accuracy, a comparison based on the
+perplexity(PPL) would provide a more stable measure of performance.
+Individual contributions of leveraging pretrained weights and recursive patternsTo understand
+the performance of our Recursive Transformer, we established two non-recursive baselines: full-size
+model and reduced-size model. The reduced size model performance is meant to serve as a lower
+bound which we can use to better judge the efficacy of (1) unique looping and parameter sharing
+techniques that are made possible by our approach and (2) leveraging pretrained layers. To further
+ablate the effect of each of two components, we conducted experiments using the Pythia 410M model
+presented in Table F.3. Intuitively, we observed significant performance gains by leveraging pretrained
+layers, with further improvement achieved through recursion. We believe this additional experiment
+provides valuable insight into the performance contributions of the two approaches proposed for
+constructing Recursive Transformers.
+Uptrain Looping PPL ↓ Few-shot Accuracy↑
+N-emb PT 𝑁𝑡𝑜𝑘 Block Init Pile LD HS PQ WG ARC-e ARC-c OB Avg
+300M ✓ - - - - 44.96 40.97 66.97 53.28 44.40 25.51 30.20 43.76
+150M ✗ 15B - - 14.11 31.48 29.53 61.37 52.49 39.14 22.44 27.00 37.63
+150M ✗ 15B 2 - 13.81 31.55 29.94 62.30 50.88 40.28 23.98 28.20 38.02
+150M ✓ 15B - Step 11.48 40.48 34.19 63.42 50.99 41.84 23.12 28.40 40.35
+150M ✓ 15B 2 Step 11.03 43.41 35.59 64.58 53.04 41.58 23.81 28.80 41.54
+TableF.3 | PerformanceofrecursiveandbaselinemodelswithPythia410Mtoinvestigatetheindividual
+contributions of pretrained weights and looping strategy. Uptraining was performed using the Pile
+dataset (Gao et al., 2020), which was also used for pretraining the original Pythia model.
+32
+
+===== PAGE 33 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+G. Expanded Results of Relaxed Recursive Transformers
+Training perplexity changes with LoRA modulesFigureG.1 illustrates the changes in training loss
+afterincorporatingthelayer-wiseLoRAmodules. TheAverageandLowerinitializationmethods, when
+coupled with our proposed SVD-based initialization of LoRA modules, demonstrated significantly
+enhanced benefits. In particular, the Relaxed Recursive Transformer employing the Average method
+consistently outperformed the others. This suggests that it is considerably easier to learn the difference
+between the original pretrained weights and the averaged looped weights using low-rank matrices.
+Stepwise Average Lower
+LoRA ✓
+LoRA ✗
+Training Loss
+2.3
+2.7
+3.1
+# of Tokens
+0B 5B 10B 15B
+(a) Gemma
+LoRA ✓
+LoRA ✗
+2.2
+2.6
+3.0
+# of Tokens
+0B 5B 10B 15B (b) TinyLlama
+LoRA ✓
+LoRA ✗
+2.5
+2.7
+2.9
+3.1
+# of Tokens
+0B 5B 10B 15B (c) Pythia
+Figure G.1 | Comparison of training loss for recursive and relaxed recursive models with two blocks.
+The LoRA rank is set to 512, and the SVD initialization method is used for LoRA modules.
+Comparison between SVD and zero initializationThe utilization of layer-wise LoRA modules
+enhances model capacity by introducing additional parameters and relaxation, thereby potentially
+improving performance. As depicted in FigureG.2, SVD initialization significantly amplified these
+performance gains compared to standard zero initialization. However, an interesting exception was
+observed with the Stepwise method, where the SVD initialized LoRA module surprisingly led to a
+performance degradation. This appears to be attributed to LoRA ranks being insufficient to adequately
+approximate the low-rank deltas across layers, resulting in initialization at a sub-optimal point.
+Zero Init
+SVD Init
+LoRA ✓
+LoRA ✗
+Few-shot Accuracy
+40
+45
+50
+55
+60
+Stepwise Average Lower
+(a) Gemma
+Zero Init
+SVD Init
+LoRA ✓
+LoRA ✗
+35
+40
+45
+50
+Stepwise Average Lower (b) TinyLlama
+Zero Init
+SVD Init
+LoRA ✓
+LoRA ✗
+40
+42
+44
+46
+48
+50
+Stepwise Average Lower (c) Pythia
+Figure G.2 | Comparison of average few-shot accuracy between zero and SVD initialization methods
+across three models. Performance gains due to LoRA relaxation are indicated by hatched bars,
+while cases where performance is lower than the recursive counterpart (without LoRA modules) are
+represented by dotted lines.
+33
+
+===== PAGE 34 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Ablation study on the LoRA rank valuesOur proposed SVD initialization ensures that the Relaxed
+Recursive Transformer can function as an interpolation between vanilla and Recursive Transformers.
+The approximation accuracy of SVD is directly influenced by the LoRA rank value; a higher rank leads
+to improved restoration of the pretrained model weights. In FigureG.3, we present a summary of
+the performance changes observed in the relaxed models by varying the LoRA ranks. As expected,
+for the Average and Lower looping initialization methods, a larger rank value results in enhanced
+performance. The Stepwise method, consistent with previous experimental findings, exhibited a
+U-shaped trend: with extremely low or high ranks, a clear performance increase results. However,
+with mid-range values, the approximation becomes less accurate, leading to a further performance
+decrease.
+Stepwise Average Lower
+Few-shot Accuracy
+45
+50
+55
+LoRA Rank
+0 64 128 256 512
+(a) Gemma
+38
+40
+42
+44
+LoRA Rank
+0 64 128 256 512 (b) TinyLlama
+43
+44
+45
+46
+LoRA Rank
+0 64 128 256 512 (c) Pythia
+Figure G.3 | Performance comparison with varying LoRA ranks under different initialization methods
+for looped layers. All LoRA weights are initialized using our proposed SVD initialization method.
+We further experimented with assigning different ranks to LoRA modules associated with each
+linear weights. Given the computational overhead inherent to LoRA modules, allocating different
+ranks to each module can offer a better balance between performance and computational efficiency.
+The experimental results in TableG.1 reveal a strong correlation between performance and overall
+model sizes. Due to the substantial hidden dimension of the linear weights within the FFN layer,
+reducing its rank led to the most significant performance drop. Conversely, the relatively smaller
+size of other attention weights resulted in less performance drop. It is intriguing that even minimal
+relaxation of key-value weights (achieved through small ranks) yielded comparable performance,
+despite the inherent strong sharing of key-value caches between attention heads in the Multi-Query
+attention structure (Ainslie et al., 2023).
+34
+
+===== PAGE 35 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Uptrain Looping LoRA Perplexity↓ Few-shot Accuracy↑
+N-embPT 𝑁𝑡𝑜𝑘 Block Init Q KV Out FFN Init SlimP RedP PG19LD HS PQ WG ARC-e ARC-c OB Avg
+1.99B ✓ 15B - - - - - - - 10.76 8.47 13.0863.5 68.5 77.0 63.5 67.6 38.1 42.660.1
+0.99B ✗ 15B - - - - - - - 22.63 20.03 32.6028.9 31.6 63.1 52.3 41.2 22.5 27.838.2
+1.30B ✓ 15B 2 Avg 256 256 256 256 SVD12.10 9.71 14.8958.2 60.7 73.7 59.0 57.6 32.1 38.054.2
+1.28B ✓ 15B 2 Avg 128 256 128 256 SVD12.27 9.81 15.1057.4 60.2 72.5 58.9 58.1 32.6 37.853.9
+1.29B ✓ 15B 2 Avg 256 128 256 256 SVD12.33 9.90 15.2558.5 59.7 73.3 58.3 56.6 32.0 40.054.1
+1.18B ✓ 15B 2 Avg 256 256 256 128 SVD12.56 10.12 15.5957.0 58.7 73.0 57.4 57.0 31.6 38.253.3
+1.27B ✓ 15B 2 Avg 128 128 128 256 SVD12.36 9.92 15.3157.2 59.2 73.1 57.3 58.0 32.2 38.653.7
+1.15B ✓ 15B 2 Avg 128 128 128 128 SVD12.52 10.07 15.5156.1 58.2 72.3 55.8 57.1 30.7 37.252.5
+1.14B ✓ 15B 2 Avg 64 128 64 128 SVD12.61 10.14 15.6955.0 57.8 73.0 57.5 56.7 30.9 38.852.8
+1.14B ✓ 15B 2 Avg 128 64 128 128 SVD12.72 10.18 15.7655.5 57.7 72.7 57.0 56.9 30.1 38.252.6
+1.08B ✓ 15B 2 Avg 128 128 128 64 SVD12.80 10.33 15.9755.3 56.7 72.9 57.7 55.0 29.6 36.051.9
+1.13B ✓ 15B 2 Avg 64 64 64 128 SVD 12.77 10.29 15.9555.2 57.4 73.0 56.7 56.5 30.5 37.252.3
+Table G.1 | Evaluation results of relaxed recursive Gemma models with varying LoRA ranks for
+different Transformer components. We adjusted the LoRA ranks attached to query, key-value, out,
+and FFN linear weights. Non-embedding parameter sizes include both the base layer parameters and
+the attached LoRA weights.
+Overall performance comparison of Relaxed Recursive TransformersA comprehensive perfor-
+mance comparison is presented in TableG.2. This encompasses an evaluation of the performance
+across three models and various looping initialization methods, considering the degree of relaxation in-
+duced by the layer-wise LoRA module. The configuration utilizing the Average method for looped layer
+initialization, paired with SVD initialization for the LoRA module, consistently outperformed all other
+baselines. Furthermore, a clear trend of improved performance was observed with increasing rank.
+35
+
+===== PAGE 36 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Uptrain Looping LoRA Perplexity↓ Few-shot Accuracy↑
+Models N-embPT 𝑁𝑡𝑜𝑘 Block Init Rank InitSlimP RedP PG19LD HS PQ WG ARC-e ARC-c OB Avg Δ
+1.99B ✓ 15B - - - - 10.76 8.47 13.0863.5 68.5 77.0 63.5 67.6 38.1 42.660.1 -
+0.99B ✗ 15B - - - - 22.63 20.03 32.6028.9 31.6 63.1 52.3 41.2 22.5 27.838.2 -
+0.99B ✓ 15B 2 Step - - 12.85 10.29 16.2153.0 57.3 73.2 56.2 56.1 29.2 36.651.7 -
+1.07B ✓ 15B 2 Step 64 SVD 12.76 10.21 15.9952.1 57.2 73.0 57.8 56.9 28.9 36.851.8+0.1
+1.15B ✓ 15B 2 Step 128 SVD13.44 10.80 16.9850.5 53.0 71.5 54.4 55.9 29.3 34.849.9–1.8
+1.30B ✓ 15B 2 Step 256 SVD14.02 11.44 18.0946.1 49.1 71.8 53.2 52.8 27.8 33.447.8–3.9
+1.60B ✓ 15B 2 Step 512 SVD13.13 10.66 16.6353.0 54.3 72.1 54.9 54.8 28.8 35.450.5–1.2
+1.60B ✓ 15B 2 Step 512 Zero12.46 9.97 15.5854.9 58.874.058.1 58.8 30.6 36.653.1+1.4
+Gemma 0.99B ✓ 15B 2 Avg - - 15.15 12.57 19.8643.6 47.4 70.4 52.6 50.5 27.8 34.446.7 -
+1.07B ✓ 15B 2 Avg 64 SVD12.8310.3516.0255.9 56.872.556.8 55.7 30.6 36.252.1+5.4
+1.15B ✓ 15B 2 Avg 128 SVD12.5210.0715.5156.1 58.272.355.8 57.1 30.7 37.252.5+5.8
+1.30B ✓ 15B 2 Avg 256 SVD12.10 9.71 14.8958.2 60.773.759.0 57.6 32.1 38.054.2+7.5
+1.60B ✓ 15B 2 Avg 512 SVD11.83 9.4614.5759.362.874.061.6 60.1 32.9 37.655.5+8.8
+1.60B ✓ 15B 2 Avg 512 Zero13.78 11.31 17.7149.8 52.4 71.7 53.3 51.2 29.4 35.049.0+2.3
+0.99B ✓ 15B 2 Lower - - 15.03 12.46 19.6342.5 48.0 71.0 54.6 52.2 27.7 33.847.1 -
+1.07B ✓ 15B 2 Lower 64 SVD 14.21 11.77 18.4047.5 50.5 70.9 54.2 54.1 29.2 36.048.9+1.8
+1.15B ✓ 15B 2 Lower 128 SVD14.23 11.83 18.4948.0 50.5 72.0 56.8 54.4 27.5 33.448.9+1.8
+1.30B ✓ 15B 2 Lower 256 SVD13.51 11.06 17.3053.1 53.7 71.8 57.4 52.5 28.7 35.250.3+3.2
+1.60B ✓ 15B 2 Lower 512 SVD12.54 10.22 15.9057.1 58.2 73.7 58.6 57.6 31.5 35.653.2+6.1
+1.60B ✓ 15B 2 Lower 512 Zero13.95 11.59 18.0248.4 52.1 71.9 55.7 54.9 28.8 34.649.5+2.4
+0.97B ✓ - - - - - 12.26 9.37 11.9443.3 42.2 66.8 53.4 44.7 23.2 29.243.3 -
+0.48B ✗ 15B - - - - 16.61 15.66 20.2722.3 30.0 60.9 50.6 37.0 23.0 28.036.0 -
+0.48B ✓ 15B 2 Step - - 11.61 9.89 13.0039.6 39.8 66.5 52.9 44.3 24.9 30.642.7 -
+0.53B ✓ 15B 2 Step 64 SVD 12.10 10.40 13.7538.9 38.3 65.2 51.5 42.026.0 31.041.9–0.8
+0.58B ✓ 15B 2 Step 128 SVD12.41 10.72 14.1036.8 37.4 64.7 53.4 42.2 24.7 30.441.4–1.3
+0.68B ✓ 15B 2 Step 256 SVD11.96 10.35 13.4838.9 38.3 65.8 51.9 43.1 25.4 29.841.9–0.8
+0.86B ✓ 15B 2 Step 512 SVD11.33 9.79 12.6142.2 40.9 67.7 51.1 45.0 25.3 30.243.2+0.5
+0.86B ✓ 15B 2 Step 512 Zero11.24 9.60 12.5642.0 41.0 67.4 52.2 44.5 25.931.243.4+0.7
+TinyLlama0.48B ✓ 15B 2 Avg - - 11.86 10.29 13.4238.6 39.4 66.1 52.8 42.7 25.4 30.642.2 -
+0.53B ✓ 15B 2 Avg 64 SVD11.22 9.66 12.5141.8 41.667.053.3 43.9 24.7 31.243.4+1.2
+0.58B ✓ 15B 2 Avg 128 SVD10.99 9.45 12.2143.2 42.168.353.2 44.8 25.9 30.444.0+1.8
+0.68B ✓ 15B 2 Avg 256 SVD10.71 9.18 11.8244.1 43.268.153.5 44.4 25.7 30.444.2+2.0
+0.86B ✓ 15B 2 Avg 512 SVD10.46 8.9211.5046.044.168.253.0 45.8 25.1 31.244.8+2.6
+0.86B ✓ 15B 2 Avg 512 Zero11.28 9.75 12.6941.5 41.0 66.8 53.2 44.8 25.531.243.4+1.2
+0.48B ✓ 15B 2 Lower - - 14.67 12.67 16.6831.9 32.3 62.6 52.0 39.1 22.1 27.838.3 -
+0.53B ✓ 15B 2 Lower 64 SVD 13.68 11.77 15.4835.5 34.0 63.8 51.0 40.0 24.6 28.039.5+1.2
+0.58B ✓ 15B 2 Lower 128 SVD13.00 11.14 14.6137.6 35.4 65.3 51.5 40.4 24.5 27.640.3+2.0
+0.68B ✓ 15B 2 Lower 256 SVD12.14 10.39 13.5940.0 37.7 66.1 52.6 42.5 24.8 30.042.0+3.7
+0.86B ✓ 15B 2 Lower 512 SVD11.31 9.61 12.4943.2 40.5 66.0 50.8 43.9 24.8 30.042.8+4.5
+0.86B ✓ 15B 2 Lower 512 Zero14.56 12.69 16.5721.2 32.9 63.9 52.6 39.5 22.9 27.837.3–1.0
+0.81B ✓ 15B - - - - 13.46 9.95 13.3855.0 49.0 71.0 53.6 51.8 28.2 32.848.8 -
+0.40B ✗ 15B - - - - 25.69 20.00 32.0824.3 30.0 61.9 50.7 38.3 22.3 26.036.2 -
+0.40B ✓ 15B 2 Step - - 16.38 12.37 17.7443.4 40.5 67.4 50.8 46.3 25.7 30.043.5 -
+0.44B ✓ 15B 2 Step 64 SVD 16.44 12.44 17.8943.7 40.4 66.5 52.9 46.5 26.2 28.843.6+0.1
+0.48B ✓ 15B 2 Step 128 SVD16.63 12.61 18.3542.4 39.3 68.0 51.5 46.3 26.7 30.643.5+0.0
+0.55B ✓ 15B 2 Step 256 SVD16.54 12.61 18.3942.8 39.1 67.2 53.7 46.4 25.9 27.843.3–0.2
+0.70B ✓ 15B 2 Step 512 SVD15.68 11.88 17.2545.4 41.368.552.6 46.7 25.4 31.244.4+0.9
+0.70B ✓ 15B 2 Step 512 Zero15.88 12.01 17.1645.5 41.8 68.0 52.6 46.626.3 30.044.4+0.9
+Pythia 0.40B ✓ 15B 2 Avg - - 16.76 12.76 18.6343.6 39.1 68.2 51.9 45.4 25.1 29.843.3 -
+0.44B ✓ 15B 2 Avg 64 SVD16.0312.1917.5945.8 40.967.350.0 45.8 25.5 31.843.9+0.6
+0.48B ✓ 15B 2 Avg 128 SVD15.6711.9317.1046.9 41.967.451.2 45.4 24.8 31.244.1+0.8
+0.55B ✓ 15B 2 Avg 256 SVD15.2211.5416.4748.5 43.367.251.4 46.7 25.5 32.044.9+1.6
+0.70B ✓ 15B 2 Avg 512 SVD14.7011.0715.7150.244.768.251.6 47.6 25.4 31.245.6+2.3
+0.70B ✓ 15B 2 Avg 512 Zero15.97 12.14 17.6545.7 41.5 68.1 51.7 46.5 25.7 30.044.2+0.9
+0.40B ✓ 15B 2 Lower - - 17.04 12.62 18.4443.9 39.2 66.3 53.4 45.4 25.8 31.243.6 -
+0.44B ✓ 15B 2 Lower 64 SVD 17.03 12.78 18.7344.1 38.3 66.9 51.9 45.4 24.7 30.843.2–0.4
+0.48B ✓ 15B 2 Lower 128 SVD16.63 12.49 18.1745.2 39.2 66.8 51.0 45.6 24.9 29.643.2–0.4
+0.55B ✓ 15B 2 Lower 256 SVD15.93 11.99 17.3047.6 41.4 68.3 53.2 46.0 25.8 31.044.8+1.2
+0.70B ✓ 15B 2 Lower 512 SVD15.11 11.34 16.0750.243.5 67.8 51.8 47.2 25.2 32.045.4+1.8
+0.70B ✓ 15B 2 Lower 512 Zero16.45 12.25 17.7645.2 40.4 66.454.5 45.8 25.9 32.644.4+0.8
+Table G.2| Overall evaluation results of Relaxed Recursive Transformers. Delta(Δ) represent the
+accuracy differences between relaxed and non-relaxed models using the same looping initialization.
+36
+
+===== PAGE 37 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+H. Alternative Approaches to Relaxation of Parameter Sharing
+To mitigate the restrictive weight-tying inherent in parameter sharing, we employed LoRA modules
+as discussed in §2.3, similar to prior work (Ge et al., 2022; Shim et al., 2024). However, efficiently
+computing multiple LoRA modules requires specialized kernels and sequential computations of the
+base layers and LoRA modules, incurring computational overhead. Consequently, we explored layer-
+specific prompts (Liu et al., 2021) as an alternative. This approach integrates prompts specific to each
+layer as prefix tokens, generating layer-wise key and value states for self-attention, and is significantly
+more amenable to parallel computation.
+TableH.1 summarizes performance of the prefix tuning method. While offering computational ad-
+vantages, its reliance on small, learnable prompts resulted in limited performance gains. Additionally,
+without leveraging the original pretrained weights, performance was significantly lower (52.1% vs.
+47.6% with the Average method in 1.07B model size). Future work will explore enhancing the effec-
+tiveness of this parallel approach, as well as other strategies such as bias term-based relaxation (Ge
+et al., 2022).
+Uptrain Looping Prefix Perplexity↓ Few-shot Accuracy↑
+Models N-embPT 𝑁𝑡𝑜𝑘 Block Init Len Size SlimP RedP PG19LD HS PQ WG ARC-e ARC-c OB Avg Δ
+1.99B ✓ 15B - - - - 10.76 8.47 13.0863.5 68.5 77.0 63.5 67.6 38.1 42.660.1 -
+0.99B ✗ 15B - - - - 22.63 20.03 32.6028.9 31.6 63.1 52.3 41.2 22.5 27.838.2 -
+0.99B ✓ 15B 2 Step - - 12.85 10.29 16.2153.0 57.3 73.2 56.2 56.1 29.2 36.651.7 -
+1.00B ✓ 15B 2 Step 256 9.4M12.62 10.06 15.8053.5 58.3 73.9 57.6 57.5 29.3 35.652.2+0.5
+1.01B ✓ 15B 2 Step 512 18.9M12.67 10.10 15.8554.1 57.8 73.8 58.4 57.2 28.7 35.852.3+0.6
+1.03B ✓ 15B 2 Step 1024 37.7M12.89 10.34 16.2253.5 57.1 72.4 57.2 56.9 28.6 36.851.8+0.1
+1.07B ✓ 15B 2 Step 2048 75.5M12.75 10.21 16.0955.0 57.3 73.3 58.2 56.8 29.2 37.852.5+0.8
+Gemma 0.99B ✓ 15B 2 Avg - - 15.15 12.57 19.8643.6 47.4 70.4 52.6 50.5 27.8 34.446.7 -
+1.00B ✓ 15B 2 Avg 256 9.4M14.85 12.31 19.4146.9 48.3 70.4 52.7 51.4 27.2 34.047.3+0.6
+1.01B ✓ 15B 2 Avg 512 18.9M15.23 12.64 19.9844.5 47.2 70.7 54.5 49.5 28.0 33.246.8+0.1
+1.03B ✓ 15B 2 Avg 1024 37.7M14.60 12.02 18.8946.9 49.7 71.1 52.3 51.0 28.6 34.247.7+1.0
+1.07B ✓ 15B 2 Avg 2048 75.5M14.63 12.07 19.0347.3 49.5 70.8 53.1 50.7 28.2 33.447.6+0.9
+0.99B ✓ 15B 2 Lower - - 15.03 12.46 19.6342.5 48.0 71.0 54.6 52.2 27.7 33.847.1 -
+1.00B ✓ 15B 2 Lower 256 9.4M14.59 12.12 19.0246.3 49.7 71.5 55.1 52.9 29.0 34.048.4+1.3
+1.01B ✓ 15B 2 Lower 512 18.9M14.53 12.03 18.8845.7 49.8 71.9 56.4 53.6 29.4 33.248.6+1.5
+1.03B ✓ 15B 2 Lower 1024 37.7M14.43 11.98 18.7446.3 50.0 71.9 55.1 54.3 29.7 33.848.7+1.6
+1.07B ✓ 15B 2 Lower 2048 75.5M14.79 12.26 19.2346.1 48.7 71.4 55.4 51.3 28.2 34.047.9+0.8
+0.97B ✓ - - - - - 12.26 9.37 11.9443.3 42.2 66.8 53.4 44.7 23.2 29.243.3 -
+0.48B ✗ 15B - - - - 16.61 15.66 20.2722.3 30.0 60.9 50.6 37.0 23.0 28.036.0 -
+0.48B ✓ 15B 2 Step - - 11.61 9.89 13.0039.6 39.8 66.5 52.9 44.3 24.9 30.642.7 -
+0.49B ✓ 15B 2 Step 256 11.5M11.61 9.89 13.0039.6 39.9 66.5 53.9 44.4 25.3 30.642.9+0.2
+0.50B ✓ 15B 2 Step 512 23.1M11.61 9.89 13.0139.5 39.9 66.7 53.4 44.1 25.3 29.842.7+0.0
+0.53B ✓ 15B 2 Step 1024 46.1M11.60 9.88 13.0039.7 39.9 66.7 53.0 44.3 25.1 30.642.8+0.1
+0.57B ✓ 15B 2 Step 2048 92.3M11.58 9.87 13.0140.1 39.9 66.8 53.4 44.4 24.9 30.042.8+0.1
+TinyLlama0.48B ✓ 15B 2 Avg - - 11.86 10.29 13.4238.6 39.4 66.1 52.8 42.7 25.4 30.642.2 -
+0.49B ✓ 15B 2 Avg 256 11.5M11.86 10.28 13.4138.5 39.4 66.2 52.5 42.8 25.9 30.842.3+0.1
+0.50B ✓ 15B 2 Avg 512 23.1M11.86 10.28 13.4138.1 39.3 66.3 52.2 42.6 25.6 30.842.1–0.1
+0.53B ✓ 15B 2 Avg 1024 46.1M11.86 10.28 13.4238.4 39.2 65.7 52.7 42.5 25.5 31.042.1–0.1
+0.57B ✓ 15B 2 Avg 2048 92.3M11.86 10.28 13.4238.5 39.5 65.9 52.7 42.4 25.7 31.042.2+0.0
+0.48B ✓ 15B 2 Lower - - 14.67 12.67 16.6831.9 32.3 62.6 52.0 39.1 22.1 27.838.3 -
+0.49B ✓ 15B 2 Lower 256 11.5M14.67 12.67 16.6931.9 32.4 62.7 51.5 38.9 22.3 27.838.2–0.1
+0.50B ✓ 15B 2 Lower 512 23.1M14.67 12.67 16.6931.9 32.3 62.8 51.7 38.9 22.2 27.838.2–0.1
+0.53B ✓ 15B 2 Lower 1024 46.1M14.67 12.67 16.6831.6 32.3 63.0 51.9 38.9 22.1 28.038.3+0.0
+0.57B ✓ 15B 2 Lower 2048 92.3M14.67 12.67 16.6734.1 32.5 62.8 52.4 38.5 23.0 27.638.7+0.4
+Table H.1| Evaluation results of relaxation through prefix tuning methods. Prefix length denotes the
+sequence length of trainable vectors used to generate key-value states in each self-attention layer.
+Non-embedding parameter sizes include the sizes of these trainable prefixes. Delta(Δ) represent the
+accuracy differences to non-relaxed models using the same looping initialization.
+37
+
+===== PAGE 38 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+I. Expanded Results of Extended Uptraining and Knowledge Distillation
+Ablation study on individual techniquesTo further enhance performance through uptraining, we
+increased the number of uptraining tokens and employed knowledge distillation loss (Hinton et al.,
+2015; Kim and Rush, 2016). Specifically, we expanded the token number from 15 billion to 60 billion.
+Furthermore, we designated the teacher model as the full-size model for each architecture, uptrained
+on 15 billion tokens from the SlimPajama dataset. Given the huge number of uptraining tokens, we
+adopted anonlineapproach to extract logits from the teacher model. Four loss functions were utilized:
+forward KL (FKL; Kim and Rush (2016)), reverse KL (RKL; Gu et al. (2024)), Jensen–Shannon
+divergence (JSD; Agarwal et al. (2024)), and total variation distance (TVD; Wen et al. (2023)).
+TableI.1 summarizes the controlled experimental results for each method. We finally selected forward
+KL as the distillation loss function due to its simplicity and superior performance. Especially, we
+observed a performance improvement of 1.7%p attributed to the extended uptraining and up to
+1.7%p from the KD loss. This suggests that combining both techniques could yield even greater gains.
+Uptrain Looping LoRA Perplexity↓ Few-shot Accuracy↑
+N-embPT 𝑁𝑡𝑜𝑘 KD FuncBlock InitRank InitSlimP RedP PG19LD HS PQ WG ARC-e ARC-c OB Avg Δ
+0.99B ✓ 15B ✗ - 2 Step - - 12.85 10.29 16.2153.0 57.3 73.2 56.2 56.1 29.2 36.651.7 -
+0.99B ✓ 60B ✗ - 2 Step - - 12.00 9.7014.8452.559.974.758.5 58.0 30.3 40.253.4+1.7
+0.99B ✓ 15B ✗ - 2 Step - - 12.85 10.29 16.2153.0 57.3 73.2 56.2 56.1 29.2 36.651.7 -
+0.99B ✓ 15B ✓ FKL 2 Step - - 12.36 9.8515.4556.858.674.858.6 59.1 29.2 36.653.4+1.7
+0.99B ✓ 15B ✓ RKL 2 Step - - 12.56 10.09 15.8055.6 58.3 74.3 58.6 58.3 30.4 37.453.3+1.6
+0.99B ✓ 15B ✓ JSD 2 Step - - 12.60 10.06 15.7756.1 58.4 73.4 57.0 58.4 29.8 37.252.9+1.2
+0.99B ✓ 15B ✓ TVD 2 Step - - 12.47 9.92 15.5255.1 58.5 74.0 58.2 58.9 29.5 36.853.0+1.3
+1.30B ✓ 15B ✗ - 2 Avg 256 SVD12.10 9.71 14.8958.2 60.7 73.7 59.0 57.6 32.1 38.054.2 -
+1.30B ✓ 15B ✓ FKL 2 Avg 256 SVD11.90 9.5214.6359.962.074.160.0 58.6 33.2 38.055.1+0.9
+1.30B ✓ 15B ✓ RKL 2 Avg 256 SVD11.95 9.62 14.7960.0 61.6 74.5 60.0 58.1 32.9 37.855.0+0.8
+1.30B ✓ 15B ✓ JSD 2 Avg 256 SVD12.09 9.65 14.8158.1 61.1 73.1 60.8 59.0 33.2 38.654.8+0.6
+1.30B ✓ 15B ✓ TVD 2 Avg 256 SVD12.05 9.62 14.7859.3 61.5 73.9 60.5 59.0 33.0 38.255.1+0.9
+Table I.1| Evaluation results of ablation studies related to longer uptraining and knowledge distillation
+loss. Performance improvements, represented by Delta, were measured for each technique. For the
+knowledge distillation loss function, we experimented with four options: FKL, RKL, JSD, and TVD.
+Forward KL was selected as the final configuration due to its simplicity and superior performance.
+Ntok = 15B Ntok = 60B + KD Loss
++27.9%
++11.5%
+Full-size
+Reduced-size
+Recursive (B2)
+Recursive (B3)
+Relaxed    (B2)
+Relaxed    (B3)
+Few-shot Accuracy
+35
+40
+45
+50
+55
+60
+Model Sizes
+0.5B 1.0B 1.5B 2.0B
+(a) Gemma
++18.6%
++3.8%
+Full-size
+Reduced-size
+Recursive (B2)
+Relaxed    (B2)35
+39
+43
+47
+Model Sizes
+0.5B 1.0B (b) TinyLlama
++20.0%
++4.1%
+Full-size
+Reduced-size
+Recursive (B2)
+Relaxed    (B2)35
+39
+43
+47
+Model Sizes
+0.5B 0.75B (c) Pythia
+FigureI.1 | Few-shotperformanceofthreemodelswithextendeduptrainingandknowledgedistillation.
+Optimal configurations are used for each model size (Stepwise for recursive models and Average for
+relaxed models). Dotted lines represent the Pareto frontier, showing the optimal trade-offs between
+model size and performance for each setting.
+38
+
+===== PAGE 39 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Overallperformanceafterlongertrainingwithdistillationloss FigureI.1andTableI.2summarize
+the performance gains achieved by incorporating these advanced training techniques. We consistently
+observed substantial improvements in few-shot performance across all architectures and with varying
+numbers of looping blocks. We anticipate that further performance enhancements can be achieved by
+utilizing a superior teacher model and increasing the uptraining cost.
+Uptrain Looping LoRA Perplexity↓ Few-shot Accuracy↑
+Models N-embPT 𝑁𝑡𝑜𝑘 KDBlock InitRank InitSlimP RedP PG19LD HS PQ WG ARC-e ARC-c OB Avg Δ
+1.99B ✓ 60B ✗ - - - - 10.58 8.44 12.7160.3 67.9 76.9 63.5 64.9 37.2 39.658.6 -
+0.99B ✗ 60B ✓ - - - - 15.33 13.04 20.3742.3 43.0 68.8 53.4 49.4 26.3 31.044.9 -
+0.99B ✗ 15B ✗ - - - - 22.63 20.03 32.6028.9 31.6 63.1 52.3 41.2 22.5 27.838.2 -
+0.66B ✗ 60B ✓ - - - - 16.79 14.39 22.8537.5 38.4 68.7 50.4 46.5 24.6 31.642.5 -
+0.66B ✗ 15B ✗ - - - - 24.44 21.69 36.0327.2 30.6 63.8 50.5 40.6 22.0 27.037.4 -
+0.99B ✓ 15B ✗ 2 Step - - 12.85 10.29 16.2153.0 57.3 73.2 56.2 56.1 29.2 36.651.7 -
+0.66B ✓ 15B ✗ 3 Step - - 14.75 12.10 19.3245.0 49.9 69.8 55.8 52.7 27.9 33.647.8 -
+1.07B ✓ 15B ✗ 2 Avg 64 SVD 12.83 10.35 16.0255.9 56.8 72.5 56.8 55.7 30.6 36.252.1 -
+1.15B ✓ 15B ✗ 2 Avg 128 SVD12.52 10.07 15.5156.1 58.2 72.3 55.8 57.1 30.7 37.252.5 -
+1.30B ✓ 15B ✗ 2 Avg 256 SVD12.10 9.71 14.8958.2 60.7 73.7 59.0 57.6 32.1 38.054.2 -
+Gemma 1.60B ✓ 15B ✗ 2 Avg 512 SVD11.83 9.46 14.5759.3 62.8 74.0 61.6 60.1 32.9 37.655.5 -
+0.99B ✓ 60B ✓ 2 Step - - 11.44 9.1413.9856.562.175.259.4 59.8 32.5 38.654.9+3.2
+1.07B ✓ 60B ✓ 2 Avg 64 SVD11.36 9.1413.8258.962.875.161.5 61.2 33.7 37.655.8+3.7
+1.15B ✓ 60B ✓ 2 Avg 128 SVD11.25 9.0413.6458.763.676.561.2 62.6 34.6 39.056.6+4.1
+1.30B ✓ 60B ✓ 2 Avg 256 SVD11.05 8.8813.3560.664.775.362.5 61.6 35.3 38.857.0+2.8
+1.60B ✓ 60B ✓ 2 Avg 512 SVD10.81 8.6312.9461.465.876.363.565.1 37.1 39.458.4+2.9
+0.66B ✓ 60B ✓ 3 Step - - 12.27 9.9015.2455.658.173.160.2 58.8 30.2 37.253.3+5.5
+0.74B ✓ 60B ✓ 3 Avg 64 SVD12.13 9.8014.9555.558.373.560.1 58.0 31.1 36.853.3 -
+0.82B ✓ 60B ✓ 3 Avg 128 SVD11.83 9.5314.5156.760.274.259.8 59.1 33.0 35.454.1 -
+0.97B ✓ 60B ✓ 3 Avg 256 SVD11.43 9.1713.8759.362.674.761.2 61.6 32.9 40.256.1 -
+1.27B ✓ 60B ✓ 3 Avg 512 SVD11.01 8.8013.2561.564.976.262.0 64.3 35.6 39.257.7 -
+0.97B ✓ - - - - - - 12.26 9.37 11.9443.3 42.2 66.8 53.4 44.7 23.2 29.243.3 -
+0.48B ✗ 60B ✓ - - - - 11.93 10.86 13.9333.3 37.3 66.8 50.1 41.7 23.9 30.240.5 -
+0.48B ✗ 15B ✗ - - - - 16.61 15.66 20.2722.3 30.0 60.9 50.6 37.0 23.0 28.036.0 -
+0.48B ✓ 15B ✗ 2 Step - - 11.61 9.89 13.0039.6 39.8 66.5 52.9 44.3 24.9 30.642.7 -
+0.53B ✓ 15B ✗ 2 Avg 64 SVD 11.22 9.66 12.5141.8 41.6 67.0 53.3 43.9 24.7 31.243.4 -
+0.58B ✓ 15B ✗ 2 Avg 128 SVD10.99 9.45 12.2143.2 42.1 68.3 53.2 44.8 25.9 30.444.0 -
+TinyLlama0.68B ✓ 15B ✗ 2 Avg 256 SVD10.71 9.18 11.8244.1 43.2 68.153.5 44.4 25.7 30.444.2 -
+0.86B ✓ 15B ✗ 2 Avg 512 SVD10.46 8.92 11.5046.0 44.1 68.2 53.0 45.8 25.1 31.244.8 -
+0.48B ✓ 60B ✓ 2 Step - - 10.51 9.0111.6044.243.168.252.4 44.7 25.3 32.244.3+1.6
+0.53B ✓ 60B ✓ 2 Avg 64 SVD10.14 8.7711.1944.344.969.552.5 46.5 26.1 31.645.1+1.6
+0.58B ✓ 60B ✓ 2 Avg 128 SVD10.07 8.6811.0745.945.169.450.5 46.8 25.4 31.645.0+1.0
+0.68B ✓ 60B ✓ 2 Avg 256 SVD 9.96 8.5610.9346.245.769.053.2 47.9 25.9 31.645.6+1.4
+0.86B ✓ 60B ✓ 2 Avg 512 SVD 9.85 8.4410.7647.446.369.752.8 47.5 26.3 31.445.9+1.1
+0.81B ✓ 60B ✗ - - - - 12.83 9.76 13.5753.0 50.2 71.1 54.8 51.9 27.7 31.648.6 -
+0.40B ✗ 60B ✓ - - - - 18.27 14.39 21.9332.1 35.0 66.1 49.6 42.9 24.2 27.039.5 -
+0.40B ✗ 15B ✗ - - - - 25.69 20.00 32.0824.3 30.0 61.9 50.7 38.3 22.3 26.036.2 -
+0.40B ✓ 15B ✗ 2 Step - - 16.38 12.37 17.7443.4 40.5 67.4 50.8 46.3 25.7 30.043.5 -
+0.44B ✓ 15B ✗ 2 Avg 64 SVD 16.03 12.19 17.5945.8 40.9 67.3 50.0 45.8 25.5 31.843.9 -
+0.48B ✓ 15B ✗ 2 Avg 128 SVD15.67 11.93 17.1046.9 41.9 67.4 51.2 45.4 24.8 31.244.1 -
+Pythia 0.55B ✓ 15B ✗ 2 Avg 256 SVD15.22 11.54 16.4748.5 43.3 67.2 51.4 46.7 25.5 32.044.9 -
+0.70B ✓ 15B ✗ 2 Avg 512 SVD14.70 11.07 15.7150.2 44.7 68.2 51.6 47.6 25.4 31.245.6 -
+0.40B ✓ 60B ✓ 2 Step - - 14.5911.1315.7947.843.869.352.0 48.1 25.4 30.445.2+1.7
+0.44B ✓ 60B ✓ 2 Avg 64 SVD14.2410.8915.5250.044.568.954.1 48.0 26.5 31.246.2+2.3
+0.48B ✓ 60B ✓ 2 Avg 128 SVD14.1010.7915.2750.145.569.052.6 48.3 25.8 32.046.2+2.1
+0.55B ✓ 60B ✓ 2 Avg 256 SVD13.9110.6114.9150.545.668.751.2 48.4 25.7 32.846.1+1.2
+0.70B ✓ 60B ✓ 2 Avg 512 SVD13.5910.3814.4352.047.069.653.4 48.9 26.9 31.247.0+1.4
+Table I.2| Evaluation results of our Recursive Transformers with 60 billion token uptraining and
+knowledge distillation loss. We utilized the forward KL loss as the knowledge distillation loss function.
+Full-size model baselines for Gemma and Pythia are the pretrained models further uptrained on 60
+billion tokens, accounting for distribution shifts between Slimapajama and their pretraining datasets.
+Delta( Δ) represents the accuracy differences between the longer uptrained models with KD and their
+15 billion uptrained counterparts.
+39
+
+===== PAGE 40 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+J. Expanded Results of Early-Exit Training
+Ablation study on early-exit training strategyTo enable early-exiting capabilities, all models
+require additional training to align intermediate representations with classifier heads. In this study,
+we conduct ablation studies on various strategies, demonstrating Recursive Transformers can be
+transformedintoearly-exitingmodelswithoutcompromisingfinalloopoutput’sperformance. TableJ.1
+presents a comprehensive summary of experimental results across various categories, including
+training procedures, loss functions, and early-exit training data. Our key findings are as follows:
+• Post-training after uptraining is essential for preserving final loop performance. Jointly training
+intermediate loop output during the uptraining phase (co-training) significantly degraded the final
+output performance, even with an aggressive loss coefficient strategy.
+• While freezing all parameters, we attempted to train intermediate loop outputs by attaching
+trainable LoRA modules to frozen classifier head. However, we found that this proved ineffective.
+• The aggressive coefficient strategy successfully maintained final loop output performance while
+enhancing intermediate output performance. Moreover, incorporating knowledge distillation from
+detached final outputs further enhanced intermediate performance.
+• No significant performance differences were observed when using the overlapped uptraining dataset
+versus new SlimPajama tokens for post-training.
+Finally, we opted to perform post-training with new tokens sourced from the same SlimPajama dataset.
+Moreover, we incorporated a distillation loss from the final loop output, while aggressively reducing
+the loss coefficients of intermediate outputs.
+Early-exit training results on final modelsWe applied the aggressive coefficient strategy with
+distillation loss to our final models (uptrained on 60 billion tokens with knowledge distillation).
+TablesJ.2 and J.3 summarize the performance of intermediate loops and the final loop across three
+models. For fair comparison, the full-size models (Gemma and Pythia) were also uptrained with
+60 billion tokens and then post-trained with 15 billion tokens. Consistent with previous findings,
+the aggressive coefficient strategy yielded the best performance across both intermediate and final
+outputs.
+However, we find that intermediate loop outputs in LoRA-relaxed models underperformed their
+non-relaxed counterparts (recursive models). This could potentially reduce throughput gain, as
+early loop performance directly influences the number of tokens eligible for early-exit. In perfectly
+tied looping blocks, intermediate outputs seem to be distilled from the last, as all gradients are
+backpropagatedtothesameparameters. Conversely, sinceLoRAmodulesalloweachlayertospecialize
+based on its depth, intermediate representations appear to be optimized to facilitate performance
+of the final output, not for their own sake. Hence, relaxation introduces a trade-off between final
+performance and early-exiting benefits. As the optimal strategy derived from the non-relaxed models
+was directly applied to the relaxed models, further exploration of optimal strategies specifically for
+relaxed models is left for future work.
+40
+
+===== PAGE 41 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+UptrainLooping Early-Exit Train Perplexity↓ Few-shot Accuracy↑
+N-embPT 𝑁𝑡𝑜𝑘 Block InitTrain Freeze𝑁𝑡𝑜𝑘 CE KD Data SlimP RedP PG19LD HS PQ WG ARC-e ARC-c OBAvg Δ
+1.99B✓ 15B - - - - - - - - 10.76 8.47 13.0863.5 68.5 77.0 63.5 67.6 38.1 42.660.1 -
+0.99B✗ 15B - - - - - - - - 22.63 20.03 32.6028.9 31.6 63.1 52.3 41.2 22.5 27.838.2 -
+0.99B✓ 15B 2 Step - - - - - - 12.85 10.29 16.2153.0 57.3 73.2 56.2 56.1 29.2 36.651.7 -
+0.99B✓ 15B 2 Step Post- ✗ 15B Weighted✗ Ovlp12.97 10.51 16.5548.9 55.5 72.7 55.3 54.9 30.1 36.050.5–1.2
+13.11 10.59 16.7149.5 54.8 72.0 53.4 54.1 29.1 35.649.8 -
+0.99B✓ 15B 2 Step Post- ✗ 15B Agg(0.3)✗ Ovlp12.60 10.21 15.7551.8 58.2 73.7 56.8 57.0 29.9 37.852.2+0.5
+13.63 11.02 17.5547.5 53.0 71.2 54.9 50.2 28.2 34.848.5 -
+12.379.9415.3753.059.173.955.457.4 30.637.852.5+0.80.99B✓ 15B 2 StepPost- ✗ 15BAgg(0.1)✗ Ovlp14.5511.8719.0045.951.271.454.548.1 26.832.047.1 -
+0.99B✓ 15B 2 Step Post- ✗ 15B Agg(0.05)✗ Ovlp12.33 9.90 15.3152.8 59.2 73.6 57.5 57.7 30.5 37.252.6+0.9
+15.70 12.93 20.6943.1 49.8 69.8 55.2 46.0 26.9 31.246.0 -
+12.28 9.80 15.2352.9 59.5 73.3 56.5 57.2 30.1 37.252.4+0.70.99B✓ 15B 2 Step Post- ✗ 15B Agg(0.01)✗ Ovlp22.76 20.37 30.3932.2 45.2 67.5 53.9 40.3 26.3 29.242.1 -
+0.99B✓ 15B 2 Step Post- ✗ 15B Weighted✓ Ovlp13.04 10.57 16.6647.7 55.1 73.2 55.6 54.5 29.1 37.250.4–1.3
+13.04 10.54 16.6648.3 54.9 72.1 55.9 54.3 28.4 35.449.9 -
+12.409.9715.4252.958.973.755.757.5 31.138.252.6+0.90.99B✓ 15B 2 StepPost- ✗ 15BAgg(0.1)✓ Ovlp14.1111.4718.3246.352.171.655.349.2 28.532.648.0 -
+0.99B✓ 15B 2 Step Post- ✓ 15B Standard✗ Ovlp12.85 10.29 16.2153.0 57.3 73.2 56.2 56.1 29.2 36.651.7+0.0
+43.74 41.63 56.785.3 37.9 61.4 52.6 35.3 24.0 29.035.0 -
+0.99B✓ 15B 2 Step Post- ✓ 15B Standard✓ Ovlp12.85 10.29 16.2153.0 57.3 73.2 56.2 56.1 29.2 36.651.7+0.0
+43.09 39.97 55.375.6 37.7 62.5 52.7 34.5 24.7 29.235.3 -
+0.99B✓ 15B 2 Step Co- ✗ 15B Agg(0.1)✗ Ovlp13.24 10.67 16.9850.1 54.2 72.2 53.7 54.7 28.9 37.450.2–1.5
+13.59 10.89 17.4250.6 52.7 71.2 54.4 53.0 27.5 35.049.2 -
+12.349.9215.3152.359.073.857.655.5 30.437.252.3+0.60.99B✓ 15B 2 StepPost- ✗ 15BAgg(0.1)✗ New14.4911.8618.8943.951.371.054.948.1 27.531.446.9 -
+Table J.1| Ablation studies on early-exit training for recursive Gemma models. We evaluated perfor-
+mance in a static-exiting scenario(Bae et al., 2023; Schuster et al., 2022), where all tokens exit at
+either first or second iteration loops (9th or 18th depths). We explored post-training (after uptraining)
+and co-training (during uptraining) approaches. Moreover, we explored freezing uptrained weights
+and adding LoRA with the rank of 128 to the classifier head. Different coefficient values were tested
+for the aggressive CE loss function. Early-exit training utilized 15 billion tokens, either overlapping
+with uptraining data or entirely new. Delta(Δ) indicates the performance changes of the final loop
+outputs. We highlight the final configuration: post-training with aggressive CE and KD loss on 15
+billion new tokens.
+41
+
+===== PAGE 42 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Uptrain Looping LoRA Early-exitTrain Perplexity↓ Few-shot Accuracy↑
+N-embPT 𝑁𝑡𝑜𝑘 KDBlock InitRank Init𝑁𝑡𝑜𝑘 CE KD SlimP RedP PG19LD HS PQ WG ARC-e ARC-c OBAvg Δ
+1.99B✓ 60B ✗ - - - - - - - 10.58 8.44 12.7160.3 67.9 76.9 63.5 64.9 37.2 39.658.6 -
+1.99B✓ 75B ✗ - - - - - - - 11.03 8.88 13.3357.0 65.9 76.2 63.9 63.0 35.9 38.857.3–1.3
+0.99B✓ 60B ✓ 2 Step - - - - - 11.44 9.14 13.9856.5 62.1 75.2 59.4 59.8 32.5 38.654.9 -
+1.07B✓ 60B ✓ 2 Avg 64 SVD - - - 11.36 9.14 13.8258.9 62.8 75.1 61.5 61.2 33.7 37.655.8 -
+1.15B✓ 60B ✓ 2 Avg 128 SVD- - - 11.25 9.04 13.6458.7 63.6 76.5 61.2 62.6 34.6 39.056.6 -
+1.30B✓ 60B ✓ 2 Avg 256 SVD- - - 11.05 8.88 13.3560.6 64.7 75.3 62.5 61.6 35.3 38.857.0 -
+1.60B✓ 60B ✓ 2 Avg 512 SVD- - - 10.81 8.63 12.9461.4 65.8 76.3 63.5 65.1 37.1 39.458.4 -
+11.71 9.56 14.4654.0 61.7 75.1 58.9 58.6 31.9 37.654.0–0.90.99B✓ 60B ✓ 2 Step - - 15B Agg(0.1)✓ 13.68 11.39 17.6045.0 54.1 71.9 58.5 49.8 28.8 33.448.8 -
+11.79 9.70 14.5253.7 60.8 73.6 61.1 58.7 32.9 37.254.0–1.81.07B✓ 60B ✓ 2 Avg 64 SVD15B Agg(0.1)✓ 19.45 16.46 26.1030.7 37.9 66.5 55.3 42.2 25.3 27.640.8 -
+11.66 9.59 14.3253.3 62.1 74.9 60.0 59.9 33.4 38.854.6–2.01.15B✓ 60B ✓ 2 Avg 128 SVD15B Agg(0.1)✓ 19.65 16.77 26.4429.7 37.7 66.8 52.6 41.4 25.3 28.040.2 -
+11.47 9.39 14.0354.9 63.0 74.5 61.7 60.5 33.1 38.455.2–1.81.30B✓ 60B ✓ 2 Avg 256 SVD15B Agg(0.1)✓ 19.67 16.82 26.4029.7 38.3 66.4 53.1 43.8 24.7 27.640.5 -
+11.20 9.14 13.5857.2 64.1 75.2 61.7 62.1 34.6 38.256.2–2.21.60B✓ 60B ✓ 2 Avg 512 SVD15B Agg(0.1)✓ 19.29 16.47 25.7332.0 39.6 67.6 53.3 43.2 25.8 30.241.7 -
+12.11 9.98 14.9752.6 59.8 74.4 59.4 57.6 31.1 37.053.1–2.71.07B✓ 60B ✓ 2 Avg 64 SVD15B Agg(0.3)✓ 16.09 13.54 21.1935.4 42.8 69.8 52.8 45.8 25.8 31.043.3 -
+11.96 9.87 14.7652.3 60.5 74.2 59.1 58.9 33.0 37.253.6–3.01.15B✓ 60B ✓ 2 Avg 128 SVD15B Agg(0.3)✓ 16.28 13.77 21.4535.2 42.1 69.8 53.5 46.5 25.8 31.243.4 -
+11.73 9.63 14.4354.3 61.4 75.0 60.7 58.8 33.1 38.654.6–2.41.30B✓ 60B ✓ 2 Avg 256 SVD15B Agg(0.3)✓ 16.41 13.89 21.6835.6 42.3 69.0 52.7 46.8 26.4 29.843.2 -
+11.47 9.36 13.9356.2 62.7 75.4 60.9 60.4 34.0 37.055.2–3.21.60B✓ 60B ✓ 2 Avg 512 SVD15B Agg(0.3)✓ 16.24 13.72 21.4237.8 43.6 69.0 54.4 45.5 26.4 31.244.0 -
+0.66B✓ 60B ✓ 3 Step - - - - - 12.27 9.90 15.2455.6 58.1 73.1 60.2 58.8 30.2 37.253.3 -
+0.74B✓ 60B ✓ 3 Avg 64 SVD - - - 12.13 9.80 14.9555.5 58.3 73.5 60.1 58.0 31.1 36.853.3 -
+0.82B✓ 60B ✓ 3 Avg 128 SVD- - - 11.83 9.53 14.5156.7 60.2 74.2 59.8 59.1 33.0 35.454.1 -
+0.97B✓ 60B ✓ 3 Avg 256 SVD- - - 11.43 9.17 13.8759.3 62.6 74.7 61.2 61.6 32.9 40.256.1 -
+1.27B✓ 60B ✓ 3 Avg 512 SVD- - - 11.01 8.80 13.2561.5 64.9 76.2 62.0 64.3 35.6 39.257.7 -
+12.75 10.48 16.0150.2 57.0 72.7 58.6 56.7 30.0 38.251.9–1.4
+13.81 11.47 17.8048.4 53.0 72.4 55.6 51.6 27.2 35.249.0 -0.66B✓ 60B ✓ 3 Step - - 15B Agg(0.1)✓
+16.72 14.23 22.9737.7 44.2 69.8 53.6 44.2 24.6 30.243.5 -
+12.64 10.43 15.8151.4 56.3 72.2 57.9 56.7 30.4 35.051.4–1.9
+19.90 16.88 26.2630.4 39.3 66.3 54.1 41.2 24.8 29.240.8 -0.74B✓ 60B ✓ 3 Avg 64 SVD15B Agg(0.1)✗
+26.31 22.49 36.1020.9 31.2 62.6 50.8 37.2 22.0 28.036.1 -
+12.37 10.21 15.3852.0 58.0 72.0 56.5 58.4 30.0 35.251.7–2.4
+20.07 17.09 26.4730.9 40.5 66.3 55.4 40.8 24.4 29.641.1 -0.82B✓ 60B ✓ 3 Avg 128 SVD15B Agg(0.1)✗
+26.15 22.46 35.9821.3 31.2 62.7 51.8 36.4 22.9 26.236.1 -
+11.92 9.78 14.7154.8 60.6 74.6 60.1 60.1 31.8 36.654.1–2.0
+19.29 16.49 25.5135.2 42.5 65.8 55.6 41.5 25.6 29.442.2 -0.97B✓ 60B ✓ 3 Avg 256 SVD15B Agg(0.1)✗
+25.12 21.53 34.5323.1 32.0 63.2 49.7 36.1 23.0 25.236.1 -
+11.49 9.38 14.0056.1 62.7 74.4 60.5 62.1 34.9 38.855.7–3.0
+18.52 15.79 24.3436.7 44.9 67.2 55.3 43.8 26.0 30.443.5 -1.27B✓ 60B ✓ 3 Avg 512 SVD15B Agg(0.1)✗
+24.19 20.70 33.2024.4 32.4 63.9 50.8 37.9 21.9 27.437.0 -
+13.07 10.84 16.4947.7 54.4 71.7 56.1 55.9 29.4 35.250.1–3.2
+16.68 14.08 21.8635.4 42.4 68.2 53.8 44.6 26.3 29.442.9 -0.74B✓ 60B ✓ 3 Avg 64 SVD15B Agg(0.3)✗
+21.43 18.26 29.1224.4 34.1 64.3 50.5 40.7 22.3 27.837.7 -
+12.71 10.54 15.9250.4 55.9 73.1 57.5 56.8 30.1 34.851.2–2.9
+16.90 14.32 22.1837.6 43.5 67.6 54.5 45.0 25.3 29.043.2 -0.82B✓ 60B ✓ 3 Avg 128 SVD15B Agg(0.3)✗
+21.23 18.13 28.8825.3 34.0 64.6 51.7 40.7 23.0 26.438.0 -
+12.26 10.15 15.2353.5 58.5 73.5 58.8 58.3 30.6 37.653.0–3.1
+16.56 14.09 21.6842.6 45.1 68.2 57.7 45.7 25.9 28.844.8 -0.97B✓ 60B ✓ 3 Avg 256 SVD15B Agg(0.3)✗
+20.78 17.72 28.2927.9 34.3 66.3 52.2 39.7 23.6 26.838.7 -
+11.80 9.68 14.4554.1 61.2 74.0 59.0 59.9 32.9 38.054.1–3.6
+16.02 13.53 20.8643.5 47.5 68.3 56.2 47.1 27.0 30.445.7 -1.27B✓ 60B ✓ 3 Avg 512 SVD15B Agg(0.3)✗
+20.20 17.21 27.5028.9 35.2 65.6 52.9 41.9 23.2 26.639.2 -
+Table J.2| Evaluation results of Gemma models after early-exit training. Delta(Δ) represent the
+accuracy changes in original last loop outputs after early-exit post-training. These changes should be
+compared in reference to the performance drops observed in 75B and 60B uptraining for the full-size
+model. The relaxed model with three blocks shows a more significant performance drop because KD
+loss (from final loop output) could not be utilized due to out-of-memory issues.
+42
+
+===== PAGE 43 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Uptrain Looping LoRA Early-exitTrainPerplexity↓ Few-shot Accuracy↑
+ModelsN-embPT𝑁𝑡𝑜𝑘KDBlock InitRank Init𝑁𝑡𝑜𝑘 CE KD SlimP RedP PG19LD HS PQ WG ARC-e ARC-c OBAvg Δ
+0.97B✓ - ✗ - - - - - - - 12.26 9.37 11.9443.3 42.2 66.8 53.4 44.7 23.2 29.243.3 -
+0.48B✓ 60B✓ 2 Step - - - - - 10.51 9.01 11.6044.2 43.1 68.2 52.4 44.7 25.3 32.244.3 -
+0.53B✓ 60B✓ 2 Avg 64 SVD - - - 10.14 8.77 11.1944.3 44.9 69.5 52.5 46.5 26.1 31.645.0 -
+0.58B✓ 60B✓ 2 Avg 128 SVD- - - 10.07 8.68 11.0745.9 45.1 69.4 50.5 46.8 25.4 31.645.0 -
+0.68B✓ 60B✓ 2 Avg 256 SVD- - - 9.96 8.56 10.9346.2 45.7 69.0 53.2 47.9 25.9 31.645.6 -
+0.86B✓ 60B✓ 2 Avg 512 SVD- - - 9.85 8.44 10.7647.4 46.3 69.7 52.8 47.5 26.3 31.445.9 -
+10.55 9.16 11.6845.0 43.7 68.9 53.4 44.8 25.3 32.244.8+0.50.48B✓ 60B✓ 2 Step - - 15B Agg(0.1)✓ 12.28 10.62 13.8338.2 39.4 65.8 52.3 41.5 24.7 30.641.8 -
+10.34 9.08 11.5043.4 44.8 69.5 53.4 46.9 25.6 32.045.1+0.10.53B✓ 60B✓ 2 Avg 64 SVD15B Agg(0.1)✓ 21.23 18.63 24.8516.8 29.0 57.6 48.9 33.2 23.1 27.033.7 -
+10.25 8.97 11.3645.2 45.5 68.8 54.0 46.5 25.0 31.645.2+0.20.58B✓ 60B✓ 2 Avg 128 SVD15B Agg(0.1)✓ 21.30 18.56 24.7518.5 28.9 58.4 48.0 34.1 21.8 27.433.9 -
+TinyLlama 10.13 8.84 11.2345.2 45.9 69.6 53.6 46.9 25.9 32.045.6+0.00.68B✓ 60B✓ 2 Avg 256 SVD15B Agg(0.1)✓ 20.95 18.16 24.2220.1 28.8 57.8 48.9 33.8 22.5 25.033.9 -
+10.02 8.74 11.0446.6 46.5 68.6 54.5 47.9 26.3 32.246.1+0.20.86B✓ 60B✓ 2 Avg 512 SVD15B Agg(0.1)✓ 20.38 17.70 23.5719.9 28.8 58.2 49.0 34.7 22.8 25.834.2 -
+10.61 9.36 11.8742.1 43.7 68.6 54.1 46.1 26.0 31.244.6–0.40.53B✓ 60B✓ 2 Avg 64 SVD15B Agg(0.3)✓ 16.83 14.88 19.7722.0 30.3 60.7 50.7 36.9 24.1 27.836.1 -
+10.50 9.22 11.7144.2 44.2 69.2 53.0 46.0 25.5 31.244.8–0.20.58B✓ 60B✓ 2 Avg 128 SVD15B Agg(0.3)✓ 17.10 15.03 19.9923.5 30.1 60.8 51.3 36.5 23.8 26.436.0 -
+10.34 9.07 11.5144.0 45.0 68.4 53.0 45.8 26.0 31.244.8–0.80.68B✓ 60B✓ 2 Avg 256 SVD15B Agg(0.3)✓ 17.06 14.92 19.8224.2 30.4 59.9 51.7 36.2 23.9 27.236.2 -
+10.21 8.94 11.2845.1 45.8 69.3 54.5 46.7 25.9 33.445.8–0.10.86B✓ 60B✓ 2 Avg 512 SVD15B Agg(0.3)✓ 16.76 14.68 19.4324.4 30.0 61.1 51.9 37.1 22.9 28.236.5 -
+0.81B✓ 60B✗ - - - - - - - 12.83 9.76 13.5753.0 50.2 71.1 54.8 51.9 27.7 31.648.6 -
+0.81B✓ 75B✗ - - - - - - - 12.86 9.86 13.7454.8 50.3 70.5 55.3 52.2 28.8 33.049.3+0.7
+0.40B✓ 60B✓ 2 Step - - - - - 14.59 11.13 15.7947.8 43.8 69.3 52.0 48.1 25.4 30.445.2 -
+0.44B✓ 60B✓ 2 Avg 64 SVD - - - 14.24 10.89 15.5250.0 44.5 68.9 54.1 48.0 26.5 31.246.2 -
+0.48B✓ 60B✓ 2 Avg 128 SVD- - - 14.10 10.79 15.2750.1 45.5 69.0 52.6 48.3 25.8 32.046.2 -
+0.55B✓ 60B✓ 2 Avg 256 SVD- - - 13.91 10.61 14.9150.5 45.6 68.7 51.2 48.4 25.7 32.846.1 -
+0.70B✓ 60B✓ 2 Avg 512 SVD- - - 13.59 10.38 14.4352.0 47.0 69.6 53.4 48.9 26.9 31.247.0 -
+14.72 11.38 16.3147.0 44.2 69.2 53.4 48.6 24.7 30.445.4+0.20.40B✓ 60B✓ 2 Step - - 15B Agg(0.1)✓ 18.61 14.11 20.9638.4 38.1 67.0 53.7 43.3 24.4 29.042.0 -
+14.49 11.22 16.1249.1 43.9 69.8 53.8 48.6 26.1 31.246.1–0.10.44B✓ 60B✓ 2 Avg 64 SVD15B Agg(0.1)✓ 24.43 18.19 27.8926.7 31.6 61.6 50.8 38.2 22.9 27.637.1 -
+14.35 11.17 15.9350.1 44.7 69.0 52.1 49.9 25.3 32.646.2+0.00.48B✓ 60B✓ 2 Avg 128 SVD15B Agg(0.1)✓ 24.33 18.09 27.9628.2 32.3 61.1 53.0 38.8 23.7 27.437.8 -
+Pythia 14.14 10.96 15.5450.8 45.5 68.2 53.9 48.8 25.3 32.846.5+0.40.55B✓ 60B✓ 2 Avg 256 SVD15B Agg(0.1)✓ 24.18 17.87 27.4828.1 32.3 61.9 54.1 38.1 22.9 28.638.0 -
+13.81 10.72 15.1152.4 47.0 69.3 52.7 50.1 26.9 32.047.2+0.20.70B✓ 60B✓ 2 Avg 512 SVD15B Agg(0.1)✓ 23.50 17.49 26.7229.5 32.8 63.2 52.3 38.8 22.8 27.838.2 -
+14.87 11.53 16.6147.0 43.1 68.7 53.0 47.4 25.7 31.045.1–0.90.44B✓ 60B✓ 2 Avg 64 SVD15B Agg(0.3)✓ 20.62 15.60 23.5732.6 33.6 63.4 51.2 40.7 23.3 28.039.0 -
+14.69 11.46 16.3648.9 43.8 68.4 53.0 49.1 26.2 31.645.9–0.30.48B✓ 60B✓ 2 Avg 128 SVD15B Agg(0.3)✓ 20.60 15.56 23.6333.2 33.6 62.7 51.1 41.3 23.6 27.839.0 -
+14.44 11.20 15.9450.0 44.7 69.2 52.3 48.1 25.4 32.246.0–0.10.55B✓ 60B✓ 2 Avg 256 SVD15B Agg(0.3)✓ 20.61 15.48 23.4533.3 34.2 63.4 52.2 40.8 23.0 28.839.4 -
+14.08 10.94 15.4451.1 46.4 68.7 52.2 50.0 26.9 31.646.7–0.30.70B✓ 60B✓ 2 Avg 512 SVD15B Agg(0.3)✓ 20.20 15.25 22.9834.6 34.1 63.5 53.0 41.5 23.6 27.639.7 -
+Table J.3| Evaluation results of TinyLlama and Pythia models after early-exit training. Delta(Δ)
+represents the accuracy change in the original last loop outputs after early-exit post-training.
+43
+
+===== PAGE 44 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+K. Expanded Results of Hypothetical Generation Speedup
+Measuring the average per-token generation timeFirst, we measured the generation time with
+various model configurations using dummy weights and inputs. We measured the elapsed time for
+each components, such as embedding matrices, Transformer blocks, and the classifier head. Especially,
+we calculated the time per token by dividing the total time by the decoding length. Default prefix and
+decoding lengths are set to 512 and 2048, but we also used shorter context lengths, like 64 and 256
+to simulate scenarios where parameter memory sizes become limiting. We measured decoding speed
+using FlashDecoding (Dao et al., 2022), a technique that has recently become standard in serving
+LLMs. Using a single A100 40GB GPU, we measured generation times by increasing batch sizes until
+an out-of-memory error occurred or memory usuage reached the predefined limit.
+In TableK.1, generation time was measured up to the maximum batch size that a single A100 GPU
+could accommodate before encountering out-of-memory errors, with prefix and decoding lengths set
+to 512 and 2048, respectively. Meanwhile, TableK.3 presents generation times measured in a more
+memory-constrained deployment scenario, where the prefix and decoding lengths were reduced to
+64 and 256, and the memory limit was set to 16GB. As anticipated, under severe memory constraints,
+the reduced parameter memory footprint of Recursive Transformers enabled substantially larger batch
+sizes. This observation indicates that Recursive Transformers, even without continuous batching
+techniques, can achieve higher throughput than vanilla Transformers due to their memory efficiency.
+When comparing the speed of the three models, Gemma 2B was the fastest, followed by TinyL-
+lama 1.1B and then Pythia 1B. This order is the exact inverse of their non-embedding parameter
+sizes. This speed difference is attributed to the Grouped-Query (Shazeer, 2019) and Multi-Query
+attention (Ainslie et al., 2023). The main decoding bottleneck in Transformers is memory access of
+heavy key-value caches. Hence, Gemma that effectively reduces the key-value cache size through the
+MQA mechanism, achieves fastest speeds. Despite using GQA, TinyLlama 1.1B has a similar speed to
+Gemma 2B due to its shallow and deep architecture (22 layers compared to Gemma’s 18 layers). This
+deeper architecture likely offsets the speed gains from the attention mechanism.
+Comparison of hypothetical generation throughputWe conducted early-exiting simulations using
+language modeling datasets (test sets of SlimPajama, RedPajama, and PG19), assuming our models
+generated those tokens. We used 20K samples to obtain their exit trajectories, and we employed
+an oracle-exiting algorithm to determine the earliest possible exit point for each token. Combining
+this trajectory data with previously measured per-token generation times across various batch sizes
+(considering only Transformer block computations), we estimated the hypothetical throughput for
+various settings and datasets. The results are detailed in TablesK.2 and K.4.
+OuranalysisrevealsthatRecursiveTransformersachievea2-3 ×throughputgainovervanillamodel
+counterparts. Relaxed models also demonstrated significant speedup despite their unoptimized LoRA
+computations. Currently, we merge multiple LoRAs into a single, large LoRA module to enable parallel
+computation of samples at different looping iterations. However, this introduces extra overhead due
+to redundant computations, resulting in reduced throughput gains in memory-constrained scenarios
+(shorter context lengths and lower memory limits). This degradation stems from the increased
+proportion of LoRA computation time relative to overall processing time. Since attention computation
+has quadratic complexity with respect to sequence length, it becomes less expensive at shorter lengths,
+while the complexity of LoRA computation remains constant. This highlights the need for highly
+optimized LoRA computations to achieve substantial throughput gains in all scenarios. Nevertheless,
+these findings also suggest that relaxed models will yield even greater performance and throughput
+improvements with longer contexts where attention computation dominates.
+44
+
+===== PAGE 45 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Approximation errors in our hypothetical throughputSince our throughput estimations are
+based on theoretical estimation, they may introduce certain approximation errors as follows:
+• As our models are not fine-tuned for any downstream task, we simulated the exit trajectories of
+language modeling datasets by assuming they were generated by our models. While this approach
+is expected to closely approximate actual generation, empirical validation is necessary to confirm
+its accuracy.
+• Throughput gains should be measured using realistic (confidence-based) early-exiting algorithms,
+rather than relying on the oracle-exiting algorithm. While early-exiting algorithms can introduce
+performance degradation due to inherent errors in confidence estimation, they also incur addi-
+tional computational costs for estimating prediction confidence, necessitating further efficiency
+improvements.
+• Our analysis solely focused on speed improvements within Transformer blocks. However, upon
+early exiting, the exited tokens require separate processing through the embedding layer or the
+classifier head for subsequent sequence generation. This necessitates non-exited tokens to wait for
+others, potentially reducing efficiency as the embedding layer computation may not fully utilize
+the maximum batch size.
+• Early-exiting architectures require computing key-value caches in remaining layers for already
+exited tokens to prevent performance degradation (Bae et al., 2023). While this adds negligible
+overhead in memory-bound scenarios, it inevitably increases overhead in compute-bound scenarios
+where the maximum batch size is fully utilized. Our throughput estimation, however, excludes
+the computation time for these key-value caches in later loops (though we did account for their
+memory size). Incorporating these computations into a more realistic analysis of early-exiting
+generation is a direction for future work.
+45
+
+===== PAGE 46 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Model Architecture Recursive Time(ms) per token
+Models 𝑁𝐿 𝑑𝑚𝑜𝑑𝑒𝑙 𝑁ℎ𝑒𝑎𝑑 𝑁𝐾𝑉 Vocab N-emb Block Rank Batch Total Emb Transformer Head
+1 22.994 0.087 21.344 0.80318 2048 8 1 256K 1.98B - - 43 0.657 0.002 0.616 0.023
+1 13.918 0.088 11.059 0.82718 2048 8 1 256K 0.99B 2 - 43 0.336 0.002 0.265 0.023
+1 15.858 0.080 13.096 0.82518 2048 8 1 256K 1.07B 2 64 41 0.398 0.002 0.323 0.024
+1 15.708 0.080 12.969 0.82218 2048 8 1 256K 1.15B 2 128 41 0.398 0.002 0.324 0.024
+1 15.456 0.083 12.721 0.81818 2048 8 1 256K 1.30B 2 256 39 0.450 0.002 0.372 0.025
+Gemma 1 15.489 0.078 12.775 0.81718 2048 8 1 256K 1.60B 2 512 39 0.499 0.002 0.422 0.025
+1 10.546 0.081 7.394 0.82718 2048 8 1 256K 0.66B 3 - 43 0.263 0.002 0.182 0.023
+1 11.871 0.080 8.724 0.82718 2048 8 1 256K 0.74B 3 64 43 0.306 0.002 0.182 0.023
+1 11.768 0.080 8.649 0.82518 2048 8 1 256K 0.82B 3 128 43 0.294 0.002 0.221 0.023
+1 12.018 0.081 8.848 0.82318 2048 8 1 256K 0.97B 3 256 41 0.311 0.002 0.226 0.024
+1 12.087 0.082 8.932 0.82218 2048 8 1 256K 1.27B 3 512 39 0.325 0.002 0.237 0.025
+1 22.016 0.082 21.010 0.18822 2048 32 4 32K 0.97B - - 329 0.819 0.000 0.815 0.001
+1 12.657 0.077 10.370 0.20922 2048 32 4 32K 0.48B 2 - 233 0.446 0.000 0.413 0.001
+1 15.243 0.079 12.908 0.211
+TinyLlama 22 2048 32 4 32K 0.53B 2 64 211 0.454 0.000 0.421 0.002
+1 15.456 0.082 13.118 0.21322 2048 32 4 32K 0.58B 2 128 209 0.454 0.000 0.421 0.002
+1 15.223 0.081 12.908 0.20822 2048 32 4 32K 0.68B 2 256 209 0.457 0.000 0.423 0.002
+1 15.383 0.080 13.062 0.21122 2048 32 4 32K 0.86B 2 512 209 0.461 0.000 0.428 0.002
+1 13.280 0.080 12.286 0.23516 2048 8 8 50K 0.81B - - 53 1.227 0.002 1.206 0.005
+1 8.423 0.081 6.378 0.26216 2048 8 8 50K 0.40B 2 - 61 0.856 0.001 0.606 0.005
+1 10.554 0.082 8.519 0.260
+Pythia 16 2048 8 8 50K 0.44B 2 64 63 0.875 0.001 0.626 0.005
+1 10.167 0.076 8.196 0.25616 2048 8 8 50K 0.48B 2 128 59 0.892 0.001 0.642 0.005
+1 10.410 0.079 8.402 0.25816 2048 8 8 50K 0.55B 2 256 59 0.913 0.001 0.662 0.005
+1 12.609 0.091 10.311 0.26716 2048 8 8 50K 0.70B 2 512 53 0.956 0.002 0.702 0.006
+Table K.1| Measurements of generation time across three models using a single A100 40GB GPU. We
+measured time per token for both a batch size of 1 and the maximum batch size achievable by each
+model. The prefix length was set to 512 tokens, and the decoded output length to 2048 tokens. We
+then averaged the total elapsed time by the output length of 2048. Dummy input and dummy tensors
+were used for measurement. Both Gemma, employing multi-query attention, and TinyLlama, utilizing
+grouped-query attention, demonstrated fast generation speeds and large maximum batch sizes relative
+to their model sizes. TinyLlama’s deep and narrow architecture allowed for a significantly large
+maximum batch size, although its generation speed was slower due to the increased number of layers.
+46
+
+===== PAGE 47 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Uptrain Looping LoRA Early-ExitTrainBatchingFew-shot Accuracy Throughput↑
+Models N-embPT 𝑁𝑡𝑜𝑘KDBlock InitRank Init𝑁𝑡𝑜𝑘 CE KD Type ExitLast Mid1 Mid2BatchSlimP RedP PG19Δ𝑉 Δ𝑆𝑒𝑞
+1.99B✓ 75B ✗ - - - - - - - - ✗ 57.3 - - 43 655 1228 1357×1.00×0.71
+1.99B✓ 75B ✗ - - - - - - - CSB ✗ 57.3 - - 43 1622 1604 1357×1.41×1.00
+0.99B✓ 60B✓ 2 Step - - 15B Agg(0.1)✓ CDB ✓ 54.0 48.8 - 43 3159 3050 2421×2.66×1.88
+1.07B✓ 60B✓ 2 Avg 64 SVD15B Agg(0.1)✓ CDB ✓ 54.0 40.8 - 41 2357 2255 1858×2.00×1.41
+1.15B✓ 60B✓ 2 Avg 128 SVD15B Agg(0.1)✓ CDB ✓ 54.6 40.2 - 41 2355 2250 1844×1.99×1.41
+1.30B✓ 60B✓ 2 Avg 256 SVD15B Agg(0.1)✓ CDB ✓ 55.2 40.5 - 39 2047 1976 1740×1.78×1.26
+1.60B✓ 60B✓ 2 Avg 512 SVD15B Agg(0.1)✓ CDB ✓ 56.2 41.7 - 39 1806 1754 1598×1.59×1.13
+1.07B✓ 60B✓ 2 Avg 64 SVD15B Agg(0.3)✓ CDB ✓ 53.1 43.3 - 41 2454 2357 1929×2.08×1.47
+1.15B✓ 60B✓ 2 Avg 128 SVD15B Agg(0.3)✓ CDB ✓ 53.6 43.4 - 41 2445 2346 1926×2.07×1.47
+1.30B✓ 60B✓ 2 Avg 256 SVD15B Agg(0.3)✓ CDB ✓ 54.6 43.2 - 39 2123 2056 1804×1.85×1.31
+Gemma 1.60B✓ 60B✓ 2 Avg 512 SVD15B Agg(0.3)✓ CDB ✓ 55.2 44.0 - 39 1870 1819 1655×1.65×1.17
+0.66B✓ 60B✓ 3 Step - - 15B Agg(0.1)✓ CDB ✓ 51.9 49.0 43.543 3120 3041 2729×2.74×1.94
+0.74B✓ 60B✓ 3 Avg 64 SVD15B Agg(0.1)✗ CDB ✓ 51.4 40.8 36.143 2334 2274 2059×2.06×1.45
+0.82B✓ 60B✓ 3 Avg 128 SVD15B Agg(0.1)✗ CDB ✓ 51.7 41.1 36.143 2290 2230 2007×2.02×1.42
+0.97B✓ 60B✓ 3 Avg 256 SVD15B Agg(0.1)✗ CDB ✓ 54.1 42.2 36.141 2281 2219 1984×2.00×1.41
+1.27B✓ 60B✓ 3 Avg 512 SVD15B Agg(0.1)✗ CDB ✓ 55.7 43.5 37.039 2181 2122 1900×1.91×1.35
+0.74B✓ 60B✓ 3 Avg 64 SVD15B Agg(0.3)✗ CDB ✓ 50.1 42.9 37.743 2427 2372 2143×2.14×1.51
+0.82B✓ 60B✓ 3 Avg 128 SVD15B Agg(0.3)✗ CDB ✓ 51.2 43.2 38.043 2376 2321 2084×2.09×1.48
+0.97B✓ 60B✓ 3 Avg 256 SVD15B Agg(0.3)✗ CDB ✓ 53.0 44.8 38.741 2359 2300 2039×2.07×1.46
+1.27B✓ 60B✓ 3 Avg 512 SVD15B Agg(0.3)✗ CDB ✓ 54.1 45.7 39.239 2251 2191 1975×1.98×1.40
+0.97B✓ - - - - - - - - - - ✗ 43.3 - - 329 1205 1220 1194×1.00×0.99
+0.97B✓ - - - - - - - - - CSB ✗ 43.3 - - 329 1227 1225 1194×1.01×1.00
+0.48B✓ 60B✓ 2 Step - - 15B Agg(0.1)✓ CDB ✓ 44.8 41.8 - 233 2038 2023 1933×1.66×1.64
+0.53B✓ 60B✓ 2 Avg 64 SVD15B Agg(0.1)✓ CDB ✓ 45.1 33.7 - 211 1733 1719 1617×1.40×1.39
+0.58B✓ 60B✓ 2 Avg 128 SVD15B Agg(0.1)✓ CDB ✓ 45.2 33.9 - 209 1733 1717 1609×1.40×1.39
+TinyLlama0.68B✓ 60B✓ 2 Avg 256 SVD15B Agg(0.1)✓ CDB ✓ 45.6 33.9 - 209 1728 1714 1606×1.39×1.38
+0.86B✓ 60B✓ 2 Avg 512 SVD15B Agg(0.1)✓ CDB ✓ 46.1 34.2 - 209 1716 1702 1581×1.38×1.37
+0.53B✓ 60B✓ 2 Avg 64 SVD15B Agg(0.3)✓ CDB ✓ 44.6 36.1 - 211 1810 1796 1688×1.46×1.45
+0.58B✓ 60B✓ 2 Avg 128 SVD15B Agg(0.3)✓ CDB ✓ 44.8 36.0 - 209 1802 1787 1668×1.45×1.44
+0.68B✓ 60B✓ 2 Avg 256 SVD15B Agg(0.3)✓ CDB ✓ 44.8 36.2 - 209 1793 1779 1668×1.45×1.44
+0.86B✓ 60B✓ 2 Avg 512 SVD15B Agg(0.3)✓ CDB ✓ 45.8 36.5 - 209 1778 1763 1637×1.43×1.42
+0.81B✓ 75B ✗ - - - - - - - - ✗ 49.3 - - 53 702 785 822×1.00×0.93
+0.81B✓ 75B ✗ - - - - - - - CSB ✗ 49.3 - - 53 829 827 822×1.07×1.00
+0.40B✓ 60B✓ 2 Step - - 15B Agg(0.1)✓ CDB ✓ 45.4 42.0 - 61 1339 1333 1281×1.71×1.60
+0.44B✓ 60B✓ 2 Avg 64 SVD15B Agg(0.1)✓ CDB ✓ 46.1 37.1 - 63 1205 1203 1140×1.54×1.43
+0.48B✓ 60B✓ 2 Avg 128 SVD15B Agg(0.1)✓ CDB ✓ 46.2 37.8 - 59 1156 1180 1108×1.49×1.39
+Pythia 0.55B✓ 60B✓ 2 Avg 256 SVD15B Agg(0.1)✓ CDB ✓ 46.5 38.0 - 59 1138 1139 1071×1.45×1.35
+0.70B✓ 60B✓ 2 Avg 512 SVD15B Agg(0.1)✓ CDB ✓ 47.2 38.2 - 53 1051 1077 1021×1.36×1.27
+0.44B✓ 60B✓ 2 Avg 64 SVD15B Agg(0.3)✓ CDB ✓ 45.1 39.0 - 63 1254 1252 1190×1.60×1.49
+0.48B✓ 60B✓ 2 Avg 128 SVD15B Agg(0.3)✓ CDB ✓ 45.9 39.0 - 59 1200 1226 1153×1.55×1.45
+0.55B✓ 60B✓ 2 Avg 256 SVD15B Agg(0.3)✓ CDB ✓ 46.0 39.4 - 59 1180 1180 1112×1.50×1.40
+0.70B✓ 60B✓ 2 Avg 512 SVD15B Agg(0.3)✓ CDB ✓ 46.7 39.7 - 53 1088 1114 1058×1.41×1.32
+Table K.2 | Hypothetical generation speedup of Recursive Transformers across three models. We
+utilized the measurements of per-token generation time calculated in TableK.1, which were calculated
+using an A100 40GB GPU, a prefix length of 512, and a decoding length of 2048. We only considered
+the time spent within Transformer blocks, simulating generation on the SlimPajama, RedPajama, and
+PG19 test sets. We used vanilla Transformer models, both with and without continuous sequence-wise
+batching (CSB), as our baselines. Our recursive models further enhance throughput by applying con-
+tinuous depth-wise batching (CDB), leveraging looping and early-exiting techniques. The throughput
+improvements over the vanilla Transformer without and with sequence-wise batching are denoted as
+Δ𝑉 and Δ𝑆𝑒𝑞, respectively. To aid in understanding the speedup, we also provide the performance of
+intermediate layers and the maximum batch size.
+47
+
+===== PAGE 48 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Model Architecture Recursive Time(ms) per token
+Models 𝑁𝐿 𝑑𝑚𝑜𝑑𝑒𝑙 𝑁ℎ𝑒𝑎𝑑 𝑁𝐾𝑉 Vocab N-emb Block Rank Batch Total Emb Transformer Head
+1 22.577 0.084 20.937 0.80118 2048 8 1 256K 1.98B - - 111 0.207 0.001 0.188 0.010
+1 13.576 0.079 10.819 0.81518 2048 8 1 256K 0.99B 2 - 123 0.118 0.001 0.091 0.009
+1 15.372 0.080 12.675 0.81318 2048 8 1 256K 1.07B 2 64 117 0.140 0.001 0.112 0.009
+1 15.631 0.082 12.899 0.81618 2048 8 1 256K 1.15B 2 128 115 0.141 0.001 0.113 0.010
+1 15.317 0.079 12.639 0.81118 2048 8 1 256K 1.30B 2 256 111 0.143 0.001 0.115 0.010
+Gemma 1 15.379 0.080 12.692 0.80718 2048 8 1 256K 1.60B 2 512 103 0.158 0.001 0.127 0.011
+1 10.528 0.080 7.411 0.81718 2048 8 1 256K 0.66B 3 - 131 0.087 0.001 0.058 0.010
+1 11.957 0.081 8.855 0.81518 2048 8 1 256K 0.74B 3 64 123 0.105 0.001 0.075 0.009
+1 11.898 0.080 8.787 0.81618 2048 8 1 256K 0.82B 3 128 121 0.103 0.001 0.074 0.009
+1 11.734 0.079 8.654 0.81318 2048 8 1 256K 0.97B 3 256 117 0.106 0.001 0.076 0.009
+1 11.986 0.080 8.856 0.80918 2048 8 1 256K 1.27B 3 512 107 0.125 0.001 0.090 0.010
+1 23.898 0.080 22.909 0.18922 2048 32 4 32K 0.97B - - 1049 0.131 0.000 0.129 0.001
+1 14.129 0.080 11.846 0.20222 2048 32 4 32K 0.48B 2 - 1121 0.070 0.000 0.064 0.001
+1 14.897 0.080 12.627 0.202
+TinyLlama 22 2048 32 4 32K 0.53B 2 64 1105 0.073 0.000 0.068 0.001
+1 15.090 0.081 12.778 0.20522 2048 32 4 32K 0.58B 2 128 1089 0.074 0.000 0.069 0.001
+1 14.962 0.081 12.659 0.20122 2048 32 4 32K 0.68B 2 256 1065 0.076 0.000 0.071 0.001
+1 15.284 0.083 12.950 0.20622 2048 32 4 32K 0.86B 2 512 1017 0.080 0.000 0.075 0.001
+1 13.341 0.081 12.326 0.23916 2048 8 8 50K 0.81B - - 229 0.176 0.000 0.171 0.002
+1 8.336 0.079 6.303 0.26116 2048 8 8 50K 0.40B 2 - 241 0.121 0.000 0.086 0.002
+1 10.408 0.081 8.353 0.262
+Pythia 16 2048 8 8 50K 0.44B 2 64 233 0.133 0.000 0.097 0.002
+1 10.426 0.082 8.378 0.25916 2048 8 8 50K 0.48B 2 128 221 0.137 0.000 0.101 0.002
+1 10.509 0.080 8.471 0.25616 2048 8 8 50K 0.55B 2 256 205 0.151 0.000 0.115 0.002
+1 11.254 0.080 9.241 0.25716 2048 8 8 50K 0.70B 2 512 165 0.177 0.001 0.139 0.002
+Table K.3 | Generation time measurements of Gemma models on a single A100 40GB GPU with
+16GB memory constraint. We measured generation time per token for both a batch size of 1 and
+the maximum batch size achievable by each model. The prefix length was set to 64 tokens, and the
+decoded output length to 256 tokens. We then averaged the total elapsed time by the output length
+of 256. Dummy input and dummy tensors were used for measurement.
+48
+
+===== PAGE 49 =====
+
+Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA
+Uptrain Looping LoRA Early-ExitTrainBatchingFew-shot Accuracy Throughput↑
+Models N-embPT 𝑁𝑡𝑜𝑘KDBlock InitRank Init𝑁𝑡𝑜𝑘 CE KD Type ExitLast Mid1 Mid2BatchSlimP RedP PG19Δ𝑉 Δ𝑆𝑒𝑞
+1.99B✓ 75B ✗ - - - - - - - - ✗ 57.3 - - 111 1740 3059 4796×1.00×0.63
+1.99B✓ 75B ✗ - - - - - - - CSB ✗ 57.3 - - 111 5287 5060 4796×1.58×1.00
+0.99B✓ 60B✓ 2 Step - - 15B Agg(0.1)✓ CDB ✓ 54.0 48.8 - 43 3159 3050 2421×2.50×1.59
+1.07B✓ 60B✓ 2 Avg 64 SVD15B Agg(0.1)✓ CDB ✓ 54.0 40.8 - 41 2357 2255 1858×1.87×1.19
+1.15B✓ 60B✓ 2 Avg 128 SVD15B Agg(0.1)✓ CDB ✓ 54.6 40.2 - 41 2355 2250 1844×1.87×1.19
+1.30B✓ 60B✓ 2 Avg 256 SVD15B Agg(0.1)✓ CDB ✓ 55.2 40.5 - 39 2047 1976 1740×1.86×1.18
+1.60B✓ 60B✓ 2 Avg 512 SVD15B Agg(0.1)✓ CDB ✓ 56.2 41.7 - 39 1806 1754 1598×1.73×1.10
+1.07B✓ 60B✓ 2 Avg 64 SVD15B Agg(0.3)✓ CDB ✓ 53.1 43.3 - 41 2454 2357 1929×1.95×1.24
+1.15B✓ 60B✓ 2 Avg 128 SVD15B Agg(0.3)✓ CDB ✓ 53.6 43.4 - 41 2445 2346 1926×1.95×1.24
+1.30B✓ 60B✓ 2 Avg 256 SVD15B Agg(0.3)✓ CDB ✓ 54.6 43.2 - 39 2123 2056 1804×1.93×1.22
+Gemma 1.60B✓ 60B✓ 2 Avg 512 SVD15B Agg(0.3)✓ CDB ✓ 55.2 44.0 - 39 1870 1819 1655×1.79×1.14
+0.66B✓ 60B✓ 3 Step - - 15B Agg(0.1)✓ CDB ✓ 51.9 49.0 43.543 3120 3041 2729×2.62×1.66
+0.74B✓ 60B✓ 3 Avg 64 SVD15B Agg(0.1)✗ CDB ✓ 51.4 40.8 36.143 2334 2274 2059×1.87×1.19
+0.82B✓ 60B✓ 3 Avg 128 SVD15B Agg(0.1)✗ CDB ✓ 51.7 41.1 36.143 2290 2230 2007×1.90×1.20
+0.97B✓ 60B✓ 3 Avg 256 SVD15B Agg(0.1)✗ CDB ✓ 54.1 42.2 36.141 2281 2219 1984×1.86×1.18
+1.27B✓ 60B✓ 3 Avg 512 SVD15B Agg(0.1)✗ CDB ✓ 55.7 43.5 37.039 2181 2122 1900×1.62×1.03
+0.74B✓ 60B✓ 3 Avg 64 SVD15B Agg(0.3)✗ CDB ✓ 50.1 42.9 37.743 2427 2372 2143×1.94×1.23
+0.82B✓ 60B✓ 3 Avg 128 SVD15B Agg(0.3)✗ CDB ✓ 51.2 43.2 38.043 2376 2321 2084×1.97×1.25
+0.97B✓ 60B✓ 3 Avg 256 SVD15B Agg(0.3)✗ CDB ✓ 53.0 44.8 38.741 2359 2300 2039×1.92×1.22
+1.27B✓ 60B✓ 3 Avg 512 SVD15B Agg(0.3)✗ CDB ✓ 54.1 45.7 39.239 2251 2191 1975×1.67×1.06
+0.97B✓ - - - - - - - - - - ✗ 43.3 - - 10496856 7481 4090×1.00×0.96
+0.97B✓ - - - - - - - - - CSB ✗ 43.3 - - 10497709 7481 4090×1.05×1.00
+0.48B✓ 60B✓ 2 Step - - 15B Agg(0.1)✓ CDB ✓ 44.8 41.8 - 233 2038 2023 1933×1.70×1.62
+0.53B✓ 60B✓ 2 Avg 64 SVD15B Agg(0.1)✓ CDB ✓ 45.1 33.7 - 211 1733 1719 1617×1.38×1.32
+0.58B✓ 60B✓ 2 Avg 128 SVD15B Agg(0.1)✓ CDB ✓ 45.2 33.9 - 209 1733 1717 1609×1.36×1.30
+TinyLlama0.68B✓ 60B✓ 2 Avg 256 SVD15B Agg(0.1)✓ CDB ✓ 45.6 33.9 - 209 1728 1714 1606×1.34×1.28
+0.86B✓ 60B✓ 2 Avg 512 SVD15B Agg(0.1)✓ CDB ✓ 46.1 34.2 - 209 1716 1702 1581×1.28×1.23
+0.53B✓ 60B✓ 2 Avg 64 SVD15B Agg(0.3)✓ CDB ✓ 44.6 36.1 - 211 1810 1796 1688×1.45×1.38
+0.58B✓ 60B✓ 2 Avg 128 SVD15B Agg(0.3)✓ CDB ✓ 44.8 36.0 - 209 1802 1787 1668×1.41×1.35
+0.68B✓ 60B✓ 2 Avg 256 SVD15B Agg(0.3)✓ CDB ✓ 44.8 36.2 - 209 1793 1779 1668×1.39×1.33
+0.86B✓ 60B✓ 2 Avg 512 SVD15B Agg(0.3)✓ CDB ✓ 45.8 36.5 - 209 1778 1763 1637×1.33×1.27
+0.81B✓ 75B ✗ - - - - - - - - ✗ 49.3 - - 229 4273 5346 5149×1.00×0.89
+0.81B✓ 75B ✗ - - - - - - - CSB ✗ 49.3 - - 229 5813 5724 5149×1.13×1.00
+0.40B✓ 60B✓ 2 Step - - 15B Agg(0.1)✓ CDB ✓ 45.4 42.0 - 61 1339 1333 1281×1.77×1.57
+0.44B✓ 60B✓ 2 Avg 64 SVD15B Agg(0.1)✓ CDB ✓ 46.1 37.1 - 63 1205 1203 1140×1.44×1.28
+0.48B✓ 60B✓ 2 Avg 128 SVD15B Agg(0.1)✓ CDB ✓ 46.2 37.8 - 59 1156 1180 1108×1.32×1.17
+Pythia 0.55B✓ 60B✓ 2 Avg 256 SVD15B Agg(0.1)✓ CDB ✓ 46.5 38.0 - 59 1138 1139 1071×1.22×1.08
+0.70B✓ 60B✓ 2 Avg 512 SVD15B Agg(0.1)✓ CDB ✓ 47.2 38.2 - 53 1051 1077 1021×0.98×0.87
+0.44B✓ 60B✓ 2 Avg 64 SVD15B Agg(0.3)✓ CDB ✓ 45.1 39.0 - 63 1254 1252 1190×1.50×1.33
+0.48B✓ 60B✓ 2 Avg 128 SVD15B Agg(0.3)✓ CDB ✓ 45.9 39.0 - 59 1200 1226 1153×1.37×1.22
+0.55B✓ 60B✓ 2 Avg 256 SVD15B Agg(0.3)✓ CDB ✓ 46.0 39.4 - 59 1180 1180 1112×1.27×1.12
+0.70B✓ 60B✓ 2 Avg 512 SVD15B Agg(0.3)✓ CDB ✓ 46.7 39.7 - 53 1088 1114 1058×1.02×0.90
+Table K.4 | Hypothetical generation speedup of Recursive Transformers across three models. We
+utilized the measurements of per-token generation time calculated in TableK.3, which were calculated
+using an A100 GPU with 16GB memory constraint, a prefix length of 64, and a decoding length of
+256. We only considered the time spent within Transformer blocks, simulating generation on the
+SlimPajama, RedPajama, and PG19 test sets. We used vanilla transformer models, both with and
+without continuous sequence-wise batching (CSB), as our baselines. Our recursive models further
+enhance throughput by applying continuous depth-wise batching (CDB), leveraging looping and
+early-exiting techniques. The throughput improvements over the vanilla Transformer without and
+with sequence-wise batching are denoted asΔ𝑉 and Δ𝑆𝑒𝑞, respectively. To aid in understanding the
+speedup, we also provide the performance of intermediate layers and the maximum batch size.
+49

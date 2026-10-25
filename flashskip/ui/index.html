@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f0ede6" />
+    <title>FlashSkip Studio</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="grain" aria-hidden="true"></div>
+    <main class="shell">
+      <header>
+        <a class="wordmark" href="/" aria-label="FlashSkip Studio home">
+          <span class="mark">FS</span>
+          <span>FlashSkip <i>Studio</i></span>
+        </a>
+        <div class="model-state" aria-live="polite">
+          <span class="pulse"></span>
+          <span id="statusText">Loading checkpoint…</span>
+        </div>
+      </header>
+
+      <section class="hero">
+        <p class="eyebrow">LOCAL LANGUAGE MODEL / 001</p>
+        <h1>Give the model<br /><em>a beginning.</em></h1>
+        <p class="intro" id="modelIntro">Choose between the 10M and 100M FlashSkip models. Every word below is generated on this machine.</p>
+      </section>
+
+      <section class="workbench">
+        <form id="generationForm">
+          <div class="model-picker">
+            <label for="modelSelect">MODEL</label>
+            <div class="model-picker-row">
+              <select id="modelSelect" aria-label="Active FlashSkip model" disabled>
+                <option value="10m">FlashSkip 10M</option>
+                <option value="100m">FlashSkip 100M</option>
+              </select>
+              <span id="modelMeta">Loading model…</span>
+            </div>
+          </div>
+
+          <label class="prompt-label" for="prompt">PROMPT</label>
+          <textarea id="prompt" name="prompt" rows="5" required autofocus>The future of small language models is</textarea>
+
+          <div class="controls">
+            <label>
+              <span>Length <output id="lengthValue">64</output></span>
+              <input id="maxTokens" type="range" min="8" max="256" step="8" value="64" />
+            </label>
+            <label>
+              <span>Temperature <output id="tempValue">0.8</output></span>
+              <input id="temperature" type="range" min="0" max="1.5" step="0.1" value="0.8" />
+            </label>
+            <label>
+              <span>Top K <output id="topKValue">50</output></span>
+              <input id="topK" type="range" min="0" max="100" step="5" value="50" />
+            </label>
+          </div>
+
+          <div class="actions">
+            <span class="hint"><kbd>⌘</kbd><kbd>↵</kbd> to generate</span>
+            <button id="generateButton" type="submit">
+              <span class="button-label">Generate</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M14 7l5 5-5 5" /></svg>
+            </button>
+          </div>
+        </form>
+
+        <article class="output-panel" aria-live="polite">
+          <div class="output-head">
+            <span>OUTPUT STREAM</span>
+            <span id="metrics">WAITING</span>
+          </div>
+          <div id="output" class="output empty">Generated text will arrive here, token by token.<span class="cursor"></span></div>
+          <button id="copyButton" class="copy" type="button" disabled>Copy output</button>
+        </article>
+      </section>
+
+      <footer>
+        <span id="checkpointName">CHECKPOINT —</span>
+        <span>EARLY PRETRAINING EXPERIMENT</span>
+      </footer>
+    </main>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

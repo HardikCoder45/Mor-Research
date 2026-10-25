@@ -1,0 +1,78 @@
+{
+  "pid": 12701,
+  "started_at": 1792511094.8192298,
+  "phase": "failed",
+  "error": "RuntimeError: hardikarora83i2492/mor-10m-token-choice-1b: Warning: Looks like you're using an outdated `kaggle` version (installed: 2.2.4), please consider upgrading to the latest version (2.2.5)\nhardikarora83i2492/mor-10m-token-choice-1b has status \"KernelWorkerStatus.ERROR\"\n; logs saved locally",
+  "updated_at": 1792747794.390975,
+  "dashboard_pid": 9962,
+  "source_published": true,
+  "source_fingerprint": "576102901ab01a9efff7439658e0d8e85e1872a0e0fe520c74126b5f28fa6d85",
+  "prep_submitted": true,
+  "gpu_hours_remaining": 27.15,
+  "quota_refresh": "2026-10-24T00:00:00",
+  "smoke_submitted": true,
+  "kernel_status": "Warning: Looks like you're using an outdated `kaggle` version (installed: 2.2.4), please consider upgrading to the latest version (2.2.5)\nhardikarora83i2492/mor-10m-token-choice-1b has status \"KernelWorkerStatus.ERROR\"",
+  "benchmark_tokens_per_second": 44627.31049054278,
+  "estimated_training_hours": 6.224389834933996,
+  "submitted_target": 700000000,
+  "tokens": 600014848,
+  "latest_checkpoint": "/Users/hardikarora/Desktop/MAIN/research/mor10m/run/downloads/600000000/result/checkpoints/checkpoint_0600014848",
+  "published_resume_tokens": 600014848,
+  "final_target": 700000000,
+  "additional_labels_requested": 500000000,
+  "require_review": true,
+  "accelerator": "NvidiaTeslaT4",
+  "review_target": 600000000,
+  "review_checkpoint": "/Users/hardikarora/Desktop/MAIN/research/mor10m/run/downloads/600000000/result/checkpoints/checkpoint_0600014848",
+  "review_decision": {
+    "checkpoint_tokens": 600014848,
+    "action": "continue",
+    "reviewed_at": 1792747681.027307,
+    "next_nominal_target": 700000000,
+    "final_segment": true,
+    "reasons": [
+      "All checkpoint SHA-256 hashes and exact step/data cursor verified. Remote job COMPLETE; local supervisor waiting with its lock held.",
+      "Validation PPL improves 74.09 -> 72.01; diagnostic prose PPL improves 137.72 -> 136.27. No consecutive validation plateau or regression stop condition is met.",
+      "Mean category accuracy recovers 69.67% -> 72.33%; still below 74% at 200M/400M. Grammar, factual and commonsense scores improve versus 500M; lexical cloze drops by one item. These tiny diagnostics are not a standardized benchmark or evidence of 1B-model parity.",
+      "Greedy repeated trigrams improve 31.06% -> 28.79%, still worse than 24.24% at baseline. Keep earlier behavioral references.",
+      "All 611 logged training rows finite. No global router collapse: training mean routes 48.43%/31.89%/19.68%; diagnostic prose routes 65.87%/29.34%/4.79%.",
+      "Approve the final unchanged 100M segment under the existing 700M total cap. Run final evaluation before completing; do not launch any training past nominal 700M."
+    ],
+    "comparisons": {
+      "val_loss_previous": 4.305272191762924,
+      "val_loss_now": 4.276752084493637,
+      "val_ppl_previous": 74.08937922726327,
+      "val_ppl_now": 72.00618978043579,
+      "heldout_ppl_previous": 137.71888033586652,
+      "heldout_ppl_now": 136.26669835632197,
+      "category_mean_baseline": 0.74,
+      "category_mean_previous": 0.6966666666666667,
+      "category_mean_now": 0.7233333333333334,
+      "category_accuracy_now": {
+        "grammar": 0.95,
+        "cloze": 0.8333333333333334,
+        "facts": 0.5,
+        "commonsense": 0.8333333333333334,
+        "arithmetic": 0.5
+      },
+      "repeat_trigrams_previous": 0.3106060606060606,
+      "repeat_trigrams_now": 0.28787878787878785,
+      "training_mean_routes": [
+        0.48431631234975964,
+        0.318903896500358,
+        0.19677979114988237
+      ],
+      "diagnostic_routes": [
+        0.658682644367218,
+        0.2934131622314453,
+        0.04790419340133667
+      ],
+      "effective_tokens_per_second": 40055.16230510563,
+      "median_step_tokens_per_second": 44791.10498520451,
+      "peak_cuda_GiB": 6.18964147567749
+    },
+    "training_changes": null,
+    "behavior_watch": true,
+    "evaluation_report": "/Users/hardikarora/Desktop/MAIN/research/mor10m/run/reviews/eval_600000000.json"
+  }
+}

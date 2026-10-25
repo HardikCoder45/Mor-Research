@@ -1,0 +1,17 @@
+{
+  "id": "hardikarora83i2492/flashskip-10m-p100-continuation",
+  "title": "FlashSkip 10M P100 Continuation",
+  "code_file": "kaggle_train_100m_segment.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "machine_shape": "NvidiaTeslaP100",
+  "dataset_sources": [
+    "hardikarora83i2492/flashskip-10m-checkpoint"
+  ],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}

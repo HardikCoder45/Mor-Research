@@ -1,0 +1,16 @@
+{
+  "files": 150,
+  "bytes": 187972608,
+  "empty_files": 0,
+  "counts": {
+    "other": 7,
+    "agent_output": 3,
+    "extracted_text": 64,
+    "note": 3,
+    "related_pdf": 62,
+    "seed_pdf": 2,
+    "qa": 3,
+    "table": 2,
+    "utility": 4
+  }
+}

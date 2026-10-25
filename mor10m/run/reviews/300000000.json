@@ -1,0 +1,46 @@
+{
+  "checkpoint_tokens": 300023808,
+  "action": "continue",
+  "reviewed_at": 1792520356.998157,
+  "next_nominal_target": 400000000,
+  "reasons": [
+    "All checkpoint SHA-256 hashes verified; remote job COMPLETE and local state review_pending.",
+    "Validation loss improves 4.47903 -> 4.38046 (PPL 88.15 -> 79.88); fixed prose PPL improves 163.05 -> 149.63.",
+    "All 611 logged training rows have finite loss/gradient/throughput/aux values. No evidence of total router collapse: average segment routes 58.15%/26.93%/14.91%.",
+    "Behavioral regression is real on this small diagnostic: equal-category mean 74% -> 70%, with five correct-to-wrong and three wrong-to-correct changes across 66 items; greedy repeated trigrams 24.24% -> 31.82%. Retain 200M checkpoint as behavioral reference.",
+    "Investigated forced recursion: 3 cycles recovers one factual and one arithmetic item but worsens prose PPL and commonsense. No broad benefit justifying a routing change.",
+    "Continue one unchanged 100M segment because two independent prose measures improve and no numerical instability appears. Reassess the flagged factual/arithmetic/repetition regressions at 400M; do not call 300M universally better."
+  ],
+  "comparisons": {
+    "baseline_tokens": 200015872,
+    "val_loss_before": 4.479028135538101,
+    "val_loss_now": 4.380463033914566,
+    "val_ppl_before": 88.14896218920491,
+    "val_ppl_now": 79.87500968219786,
+    "heldout_ppl_before": 163.0485743600929,
+    "heldout_ppl_now": 149.63324026409026,
+    "category_mean_before": 0.74,
+    "category_mean_now": 0.7,
+    "category_accuracy_now": {
+      "grammar": 0.95,
+      "cloze": 1.0,
+      "facts": 0.4166666666666667,
+      "commonsense": 0.8333333333333334,
+      "arithmetic": 0.3
+    },
+    "repeated_trigrams_before": 0.2424242424242424,
+    "repeated_trigrams_now": 0.3181818181818182,
+    "heldout_depth_fractions": [
+      0.6227545142173767,
+      0.326347291469574,
+      0.05089820176362991
+    ],
+    "median_step_tokens_per_second": 43708.26571244319,
+    "effective_tokens_per_second": 38910.67748620241,
+    "peak_cuda_GiB": 6.249136924743652
+  },
+  "training_changes": null,
+  "behavior_watch": true,
+  "ablation_report": "/Users/hardikarora/Desktop/MAIN/research/mor10m/run/reviews/routing_ablation_300m.json",
+  "evaluation_report": "/Users/hardikarora/Desktop/MAIN/research/mor10m/run/reviews/eval_300000000.json"
+}

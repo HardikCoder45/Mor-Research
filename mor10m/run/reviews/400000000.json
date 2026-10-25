@@ -1,0 +1,50 @@
+{
+  "checkpoint_tokens": 400031744,
+  "action": "continue",
+  "reviewed_at": 1792662231.0614772,
+  "next_nominal_target": 500000000,
+  "reasons": [
+    "Remote segment completed. All checkpoint hashes and exact no-replay step/data cursor verified.",
+    "Validation PPL improves 79.875 -> 77.301; diagnostic prose PPL improves 149.63 -> 146.00.",
+    "Equal-category diagnostic accuracy recovers 70% -> 74%, matching 200M baseline. Arithmetic recovers 30% -> 50%; facts remain below baseline (41.7% vs 58.3%). No claim of general or 1B-level parity.",
+    "Repeated trigrams improve 31.82% -> 28.03%, still worse than 24.24% baseline; generation remains weak.",
+    "Investigated third-depth suppression: 0% on 224 short diagnostic texts (1,751 tokens), 0.195% on a 512-token concatenated diagnostic prose probe. Training averages 17.20% third-cycle use, 17.10% in last 20 logged batches. This is context/distribution-sensitive routing rather than total global collapse, but a limitation to monitor.",
+    "All 611 logged training rows finite. Two AMP overflow retries were logged; the existing scaler retries without counting labels. No sustained numerical instability observed.",
+    "Local supervisor lock was free and local status stale; completed 400M output recovered before restarting. Continue unchanged to 500M under the existing nominal 700M cap."
+  ],
+  "comparisons": {
+    "baseline_tokens": 200015872,
+    "previous_tokens": 300023808,
+    "val_ppl_baseline": 88.14896218920491,
+    "val_ppl_previous": 79.87500968219786,
+    "val_ppl_now": 77.30052020518758,
+    "val_loss_now": 4.34770068526268,
+    "heldout_ppl_now": 146.00343444646938,
+    "category_mean_now": 0.74,
+    "category_accuracy_now": {
+      "grammar": 0.95,
+      "cloze": 0.9166666666666666,
+      "facts": 0.4166666666666667,
+      "commonsense": 0.9166666666666666,
+      "arithmetic": 0.5
+    },
+    "repeat_trigrams_now": 0.2803030303030303,
+    "training_mean_routes": [
+      0.5317012705701463,
+      0.296290371109733,
+      0.1720083583201207
+    ],
+    "diagnostic_prose_routes": [
+      0.6916167736053467,
+      0.3083832263946533,
+      0.0
+    ],
+    "median_step_tokens_per_second": 43694.12846506694,
+    "effective_tokens_per_second": 41179.138242773675,
+    "peak_cuda_GiB": 6.1647725105285645
+  },
+  "training_changes": null,
+  "behavior_watch": true,
+  "routing_watch": true,
+  "evaluation_report": "/Users/hardikarora/Desktop/MAIN/research/mor10m/run/reviews/eval_400000000.json"
+}

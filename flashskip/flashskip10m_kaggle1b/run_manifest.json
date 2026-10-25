@@ -1,0 +1,62 @@
+{
+  "accelerator": {
+    "capability": [
+      6,
+      0
+    ],
+    "count": 1,
+    "cuda": "12.6",
+    "names": [
+      "Tesla P100-PCIE-16GB"
+    ],
+    "sum": 1024.0,
+    "torch": "2.6.0+cu126"
+  },
+  "checkpoints": [
+    {
+      "name": "checkpoint_step_018312_tokens_0600.05M",
+      "tokens_seen": 600047616
+    },
+    {
+      "name": "checkpoint_step_021364_tokens_0700.06M",
+      "tokens_seen": 700055552
+    },
+    {
+      "name": "checkpoint_step_024416_tokens_0800.06M",
+      "tokens_seen": 800063488
+    },
+    {
+      "name": "checkpoint_step_027468_tokens_0900.07M",
+      "tokens_seen": 900071424
+    },
+    {
+      "name": "checkpoint_step_030519_tokens_1000.05M",
+      "tokens_seen": 1000046592
+    },
+    {
+      "name": "checkpoint_step_033571_tokens_1100.05M",
+      "tokens_seen": 1100054528
+    },
+    {
+      "name": "checkpoint_step_036623_tokens_1200.06M",
+      "tokens_seen": 1200062464
+    },
+    {
+      "name": "checkpoint_step_039675_tokens_1300.07M",
+      "tokens_seen": 1300070400
+    },
+    {
+      "name": "checkpoint_step_042726_tokens_1400.05M",
+      "tokens_seen": 1400045568
+    },
+    {
+      "name": "checkpoint_step_045778_tokens_1500.05M",
+      "tokens_seen": 1500053504
+    }
+  ],
+  "no_replay_cursor": 501016320,
+  "nominal_final_tokens": 1500039680,
+  "nominal_new_tokens": 1000000000,
+  "start_tokens": 500039680,
+  "step_aligned_final_tokens": 1500053504
+}

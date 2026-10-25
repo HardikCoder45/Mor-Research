@@ -1,0 +1,19 @@
+{
+  "config": "sample-10BT",
+  "counts": {
+    "train": 1002000000,
+    "val": 1000917
+  },
+  "documents": 962222,
+  "duplicates_rejected": 3922,
+  "holdout_document_disjoint": true,
+  "revision": "87f09149ef4734204d70ed1d046ddc9ca3f2b8f9",
+  "seed": 20260904,
+  "sha256": {
+    "train_tokens.uint16": "654d16459884f3f6777a1c43927e4eefaeb7014d3e63960d155a4a99a009a169",
+    "val_tokens.uint16": "c27167b3738291a4e14451e1ffdfde4325aafe9e0b82e42d868a3853fa2a2809"
+  },
+  "source": "HuggingFaceFW/fineweb-edu",
+  "tokenizer": "SmolLM2-135M",
+  "vocab": 49152
+}

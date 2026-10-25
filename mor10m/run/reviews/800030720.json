@@ -1,0 +1,33 @@
+{
+  "checkpoint_tokens": 800030720,
+  "action": "continue",
+  "reasons": [
+    "All checkpoint SHA256 hashes verified; finite training gradients and active depth routing.",
+    "Comparable 128-batch validation PPL improved 0.865%, exceeding the 0.5% threshold.",
+    "Behavior is mixed: facts improved, arithmetic and grammar declined; first category-mean warning, not two successive segments. Recheck at 900M before further release; preserve 700M baseline."
+  ],
+  "comparisons": {
+    "validation_initial": {
+      "loss": 4.406871024519205,
+      "perplexity": 82.01244667944358,
+      "tokens": 131072
+    },
+    "validation_current": {
+      "loss": 4.398180764168501,
+      "perplexity": 81.30282503015928,
+      "tokens": 131072
+    },
+    "category_mean_baseline": 0.72,
+    "category_mean_current": 0.6866666666666668,
+    "behavior_warning_streak": 1,
+    "heldout_ppl_baseline": 129.53194562343262,
+    "heldout_ppl_current": 132.98258051244983,
+    "repetition_baseline": 0.2878787878787879,
+    "repetition_current": 0.32575757575757575,
+    "depth_fractions": [
+      0.455089807510376,
+      0.23952095210552216,
+      0.3053892254829407
+    ]
+  }
+}

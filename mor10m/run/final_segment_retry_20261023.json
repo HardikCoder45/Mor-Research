@@ -1,0 +1,9 @@
+{
+  "time": 1792762954.505478,
+  "last_verified_tokens": 600014848,
+  "remote_status": "ERROR",
+  "failure_diagnostics": "Kaggle returned an empty [] log and no output checkpoint. No specific model-code fault was reported.",
+  "recovery": "One bounded retry from the verified 600M checkpoint, after checking current remote ERROR, free supervisor lock and ready resume dataset. Previous recovery was delayed because automatic approval review could not run due to an account usage limit; tool access is now available.",
+  "target": 700000000,
+  "training_changes": null
+}

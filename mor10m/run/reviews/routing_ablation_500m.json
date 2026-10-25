@@ -1,0 +1,23 @@
+{
+  "note": "Forcing depth also changes selected routing probability/output weighting; an intervention, not a trained fixed-depth baseline.",
+  "results": [
+    {
+      "cycles": 1,
+      "prose_ppl": 137.75396041236004,
+      "grammar": 0.9,
+      "commonsense": 0.75
+    },
+    {
+      "cycles": 2,
+      "prose_ppl": 135.8678141865678,
+      "grammar": 0.9,
+      "commonsense": 0.75
+    },
+    {
+      "cycles": 3,
+      "prose_ppl": 135.06379379882554,
+      "grammar": 0.9,
+      "commonsense": 0.75
+    }
+  ]
+}

@@ -1,0 +1,1256 @@
+
+
+===== PAGE 1 =====
+
+MobiLlama: Towards Accurate and Lightweight Fully Transparent GPT
+Omkar Thawakar1*, Ashmal Vayani1*, Salman Khan1,2, Hisham Cholakal1,
+Rao M. Anwer1,3, Michael Felsberg5, Tim Baldwin1,4, Eric P. Xing1, Fahad Shahbaz Khan1,5
+1Mohamed bin Zayed University of AI, 2Australian National University, 3Aalto University
+4The University of Melbourne, 5Linköping University
+Abstract
+‘Bigger the better’ has been the predominant
+trend in recent Large Language Models (LLMs)
+development. However, LLMs do not suit well
+for scenarios that require on-device process-
+ing, energy efficiency, low memory footprint,
+and response efficiency. These requisites are
+crucial for privacy, security, and sustainable
+deployment. This paper explores the ‘ less is
+more’ paradigm by addressing the challenge
+of designing accurate yet efficient Small Lan-
+guage Models (SLMs) for resource constrained
+devices. Our primary contribution is the in-
+troduction of an accurate and fully transpar-
+ent open-source 0.5 billion (0.5B) parameter
+SLM, named MobiLlama, catering to the spe-
+cific needs of resource-constrained computing
+with an emphasis on enhanced performance
+with reduced resource demands. MobiLlama
+is a SLM design that initiates from a larger
+model and applies a careful parameter sharing
+scheme to reduce both the pre-training and the
+deployment cost. Our work strives to not only
+bridge the gap in open-source SLMs but also
+ensures full transparency, where complete train-
+ing data pipeline, training code, model weights,
+and over 300 checkpoints along with evaluation
+codes is available at : https://github.com/
+mbzuai-oryx/MobiLlama.
+1 Introduction
+Recent years have witnessed a tremendous surge
+in the development of Large Language Models
+(LLMs) with the emergence of prominent closed-
+source commercial models such as ChatGPT, Bard,
+and Claude. These LLMs exhibit surprising ca-
+pabilities, typically called emergent abilities, to-
+wards solving complex tasks. Most existing pop-
+ular LLMs follow a similar trend that bigger is al-
+ways better, where scaling model size or data size
+typically provides improved model capacity and
+performance on downstream tasks. For instance,
+*Equal contribution.
+the recent Llama-2 70 billion (70B) model (Tou-
+vron et al., 2023) is considered more favorable
+in different chat applications due to its effective-
+ness towards handling dialogues, logical reason-
+ing, coding, compared to its 7B counterpart which
+is typically better suited for basic tasks such as
+categorization or summaries. While these LLMs
+demonstrate impressive performance in handling
+complex language tasks, a key limitation is their
+size and computational requirements. For instance,
+the large-scale Falcon (Almazrouei et al., 2023)
+180B model was trained using 4096 A100 GPUs
+and requires large memory and compute for deploy-
+ment with dedicated high-performance servers and
+scalable storage systems.
+Recently, Small Language Models (SLMs) have
+shown potential in terms of providing decent perfor-
+mance with emergent abilities achieved at a signifi-
+cantly smaller scale compared to their large-scale
+LLM counterparts. Modern SLMs like Microsoft’s
+Phi-2 2.7 billion (Li et al., 2023b) highlight the
+growing focus in the community on achieving more
+with less. SLMs offer advantages in terms of effi-
+ciency, cost, flexibility, and customizability. With
+fewer parameters, SLMs offer significant compu-
+tational efficiency in terms of fast pre-training and
+inference with reduced memory and storage re-
+quirements. This is critical in real-world applica-
+tions where efficient resource utilization is highly
+desired. It particularly opens up possibilities in
+resource-constrained computing, where the models
+are required to be memory efficient to operate on
+low-powered devices (e.g., edge). SLMs support
+on-device processing that enhances privacy, secu-
+rity, response time, and personalization. Such an
+integration can lead to advanced personal assistants,
+cloud-independent applications, and improved en-
+ergy efficiency with a reduced carbon footprint.
+The landscape of language models, especially
+SLMs, is currently marked by a notable lack of
+open-source availability. While LLMs have gar-
+1
+arXiv:2402.16840v1  [cs.CL]  26 Feb 2024
+
+===== PAGE 2 =====
+
+nered significant attention, the proprietary nature of
+most models has led to limited transparency and ac-
+cessibility, particularly in the realm of SLMs. This
+gap hinders the scientific and technological explo-
+ration of these more efficient, compact and perfor-
+mant models. Recognizing this, there’s a growing
+need in the community for fully transparent open-
+source SLMs, which would facilitate a deeper un-
+derstanding of their capabilities and limitations and
+spur innovation by allowing broader community ac-
+cess to their architecture and reproducible training
+methodologies. We argue that bridging this gap is
+crucial for democratizing access to collaborative ad-
+vancement for SLMs. Therefore, we investigate the
+problem of designing accurate yet efficient SLMs
+from scratch with the intention to provide full trans-
+parency in the form of access to entire training data
+pipeline and code, model weights, more than 300
+checkpoints along with evaluation codes.
+When designing a SLM from scratch it is de-
+sired that the resulting model is accurate, while
+maintaining efficiency in terms of pre-training and
+deployment. A straightforward way is to scale-
+down a larger LLM design to the desired model
+size (e.g., 0.5B) by reducing either the size of the
+hidden dimension layers or the number of layers.
+We empirically observe both these design strategies
+to provide inferior performance. This motivates us
+to look into an alternative way of designing a SLM
+from scratch that is accurate yet maintains the effi-
+ciency, while offering full transparency.
+Contributions:
+We introduce a SLM framework, named MobiL-
+lama, with an aim to develop accurate SLMs by al-
+leviating the redundancy in the transformer blocks.
+Different to the conventional SLM design where
+dedicated feed forward layers (FFN) are typically
+allocated to each transformer block, we propose
+to employ a shared FFN design for all the trans-
+former blocks within SLM. Our MobiLlama lever-
+aging a shared FFN-based SLM design is accurate
+and maintains efficiency, while offering full trans-
+parency in terms of data pipeline, training code,
+model weights and extensive intermediate check-
+points along with evaluation codes.
+We empirically show that our MobiLlama per-
+forms favorably compared to conventional SLMs
+design schemes when performing pre-training from
+scratch. Our MobiLlama 0.5B model outperforms
+existing SLMs of similar size on nine different
+benchmarks. MobiLlama 0.5B achieves a gain
+of 2.4% in terms of average performance on nine
+Figure 1: Comparison of our MobiLlama 0.5B and
+0.8B models with recent OLMo-1.17B (Groeneveld
+et al., 2024) and TinyLlama-1.1B (Zhang et al., 2024) in
+terms of pre-training tokens, pre-training time and mem-
+ory, model parameters, overall accuracy across nine
+benchmarks and on-device efficiency (average battery
+consumption and average token/second on a PC with
+RTX2080Ti). Our MobiLlama achieves comparable ac-
+curacy while requiring significantly fewer pre-training
+data (1.2T tokens vs. 3T tokens), lesser pre-training
+time and GPU memory along with being efficient in
+terms of deployment on a resource constrained device.
+benchmarks, compared to the best existing 0.5B
+SLM in the literature. We further develop a 0.8B
+SLM that originates from our 0.5B model by uti-
+lizing a wider shared-FFN scheme in transformer
+blocks, achieving top performance among existing
+SLMs falling under less than 1B parameters cate-
+gory. Lastly, we build multimodal models on top of
+our SLM to showcase visual perception and reason-
+ing capabilities. Fig. 1 shows a comparison of our
+MobiLlama with recent fully transparent relatively
+larger SLMs in terms of accuracy, pre-training com-
+plexity and on-board deployment cost.
+2 Related Work
+While LLMs have gained tremendous popular-
+ity (Zhao et al., 2023), one of their key limitations
+is the size and computational requirements both
+during pre-training and deployment. Another issue
+is limited availability of fully transparent opens-
+source LLMs that provide complete access to data
+pipeline, training code along with checkpoints and
+evaluation protocols. Prior works explore making
+several components of LLM framework efficient
+such as, attention mechanism (Dao, 2023) and opti-
+mization strategies (Loshchilov and Hutter, 2017).
+Further, existing efforts also include exploring post-
+training sparsification schemes (Ashkboos et al.,
+2024) or quantization (Hoefler et al., 2021; Zhu
+et al., 2023; Xiao et al., 2023) of computationally
+2
+
+===== PAGE 3 =====
+
+Model #Params Training Time GPU Hours GPU memory No. of layers Hidden dim size
+baseline1 0.54B 7.5 days 28.8K 3.2 GB 22 1024
+baseline2 0.52B 7 days 26.9K 3 GB 8 2048
+large-base 1.2B 12 days 46.1K 6 GB 22 2048
+MobiLlama 0.52B 7 days 26.6K 3 GB 22 2048
+Table 1: Comparison of our MobiLlama with the two baselines and the large-base model. We show the comparison
+in terms of total number of parameters, training time, total GPU hours, GPU memory, number of transformer layers
+and the hidden dimension size in each layer. The numbers are computed on A100 GPUs with 80 GB memory each.
+Compared to large-base, our MobiLlama reduces the GPU training hours by 42% along with a significant reduction
+in GPU memory with the same design configuration (number of layers and hidden dimension size etc.). Further,
+our MobiLlama possesses increased model capacity in terms of number of layers and hidden dimension size while
+maintaining comparable training cost and parameters, compared to baseline1 and baseline2.
+expensive LLM. In several cases, such a post-hoc
+sparsification can reduce the performance of LLMs
+with more on-device memory consumption, com-
+pared to a SLM trained from scratch. Further, these
+techniques typically employ LLMs with limited
+transparency and accessibility.
+Recently, designing SLMs from scratch have
+gained attention (Biderman et al., 2023; Wu et al.,
+2023; Zhang et al., 2024; Li et al., 2023a; Lin et al.,
+2021b; Shoeybi et al., 2019; Zhang et al., 2022).
+SLMs have shown potential as an alternative es-
+pecially in case of limited pre-training compute
+as well as deployment in resource-constrained en-
+vironments (e.g., edge devices). Further, SLMs
+can support on-device processing which in turn
+can enhance security, privacy, response efficiency,
+and personalization. Here, we strive to construct
+fully transparent accurate yet computationally effi-
+cient SLMs by maintaining the model’s capacity to
+capture complex patterns and relationships in data
+while reducing the redundancy often present in the
+parameters of SLMs. Prior works (Frantar et al.,
+2022; Gholami et al., 2022; Pires et al., 2023; Pan
+et al., 2023; Bhojanapalli et al., 2021) exploring
+alleviating redundancy in transformer design either
+focusing on the attention mechanism or on the sin-
+gle feed-forward layer in BERT style architectures.
+Different from these approaches, we explore alle-
+viating the redundancy in the SLM architectures
+with an LLM objective function by focusing on the
+sharing mechanism of MLP blocks having multiple
+feed-forward network (FFN) layers.
+3 Method
+3.1 Baseline SLM Design
+We first describe our baseline 0.5B SLM architec-
+ture that is adapted from recent TinyLlama (Zhang
+et al., 2024) and Llama-2 (Touvron et al., 2023).
+The baseline architecture comprises N layers,
+where each layer consists of hidden dimensions
+of M and intermediate size (MLPs) of 5632. The
+vocabulary size is 32K and max. context length is
+C. We consider two different design choices when
+constructing a 0.5B model from scratch. In first de-
+sign choice, named baseline1, the number of layer
+is set to N = 22 and hidden size of each layer is
+set to M = 1024. In second design choice, named
+baseline2, we set the number of layer to N = 8
+and hidden size of each layer is set to M = 2048.
+We note that both the aforementioned base-
+line designs struggle to strike an optimal balance
+between accuracy and efficiency. While a re-
+duced size of hidden dimensions (1024) in case
+of baseline1 aids in computational efficiency, it
+can likely hamper the model’s capacity to capture
+complex patterns within the data. Such a reduction
+in dimension can potentially lead to a bottleneck ef-
+fect, where the model’s ability to represent intricate
+relationships and nuances in the data is constrained,
+thereby affecting the overall accuracy. On the other
+hand, reducing the number of hidden layers (22 to
+8), as in the baseline2, affects the model’s depth
+that in turn hampers its ability to learn hierarchi-
+cal representations of the language. Achieving
+superior performance on tasks requiring deeper
+linguistic comprehension and contextual analysis
+likely requires combining the advantages of the two
+aforementioned baselines. However, increasing the
+model capacity of baseline1 and baseline2 into a
+single model (22 layers and hidden dimension size
+of 2048) results in a significantly larger parame-
+terized model of 1.2B with increased training cost
+(see Tab. 1). We name this larger model as large-
+base. Next, we present our proposed MobiLlama
+0.5B model design that does not reduce hidden di-
+mension size in each layer (baseline1) or the total
+number of layers (baseline2), while maintaining a
+comparable training efficiency (see Tab. 1).
+3
+
+===== PAGE 4 =====
+
+(self_attn1):LlamaAttention(q,k,v,o,rotary_embd)
+(mlp1): LlamaMLP(
+(gate_proj): Linear(in_feat=1024, out_feat=5632)
+(down_proj): Linear(in_feat=5632, out_feat=1024)
+(up_proj): Linear(in_feat=1024, out_feat=5632)
+(act_fn): NewGELUActivation() 
+)
+(self_attn22): LlamaAttention(q,k,v,o,rotary_embd)
+(mlp22): LlamaMLP(
+(gate_proj): Linear(in_feat=1024, out_feat=
+5632)
+(down_proj): Linear(in_feat=5632, out_feat=
+1024)
+(up_proj): Linear(in_feat=1024, out_feat=
+5632)
+(act_fn): NewGELUActivation
+() 
+)
+𝑏𝑎𝑠𝑒𝑙𝑖𝑛𝑒1(n_layers=22, hidden_dims=1024)(self_attn1):LlamaAttention(q,k,v,o,rotary_embd)
+(mlp1): LlamaMLP(
+(gate_proj): Linear(in_feat=2048, out_feat=5632)
+(down_proj): Linear(in_feat=5632, out_feat=2048)
+(up_proj): Linear(in_feat=2048, out_feat=5632)
+(act_fn): NewGELUActivation() 
+)
+(self_attn8): LlamaAttention(q,k,v,o,rotary_embd)
+(
+mlp8
+): LlamaMLP(
+(gate_proj): Linear(in_feat=2048, out_feat=
+5632)
+(down_proj): Linear(in_feat=5632, out_feat=
+2048)
+(up_proj): Linear(in_feat=2048, out_feat=
+5632)
+(act_fn): NewGELUActivation
+() 
+)
+𝑏𝑎𝑠𝑒𝑙𝑖𝑛𝑒2(n_layers=8, hidden_dims=2048)(self_attn1):LlamaAttention(q,k,v,o,rotary_embd)
+(mlp): LlamaMLP(
+(gate_proj): Linear(in_feat=2048, out_feat=5632)
+(down_proj): Linear(in_feat=5632, out_feat=2048)
+(up_proj): Linear(in_feat=2048, out_feat=5632)
+(act_fn): NewGELUActivation() 
+)
+(self_attn22): LlamaAttention(q,k,v,o,rotary_embd)
+(mlp): LlamaMLP(
+(gate_proj): Linear(in_feat=2048, out_feat=
+5632)
+(down_proj): Linear(in_feat=5632, out_feat=
+2048)
+(up_proj): Linear(in_feat=2048, out_feat=
+5632)
+(act_fn): NewGELUActivation
+() 
+)
+𝑴𝒐𝒃𝒊𝑳𝒍𝒂𝒎𝒂(n_layers=22, hidden_dims=2048)
+Figure 2: Illustrative comparison of our MobiLlama with the two baselines. For each case, we show two transformer
+blocks denoted by different self-attention layers. In the case of both baseline1 and baseline2, a dedicated MLP
+block comprising three FFN layers is utilized for each transformer layer. In contrast, our MobiLlama utilizes a
+single MLP block (highlighted by the same color) that is shared across different transformer layers. This enables to
+increase the capacity of the network in terms of layers and hidden dimension size without any significant increase in
+the total number of trainable parameters.
+3.2 Proposed SLM Design: MobiLlama
+The proposed approach, MobiLlama, constructs a
+SLM of desired sizes (e.g., 0.5B model) by first
+initiating from a larger model size design, large-
+base. Then, we employ a careful parameter sharing
+scheme to reduce the model size to a pre-defined
+model configuration, thereby significantly reducing
+the training cost. Generally, both SLMs and LLMs
+typically utilize a dedicated multilayer perceptron
+(MLP) block comprising multiple feed forward net-
+work (FFN) layers within each transformer block.
+In such a configuration (e.g., large-base), the FFN
+layers account for a substantial 65% of the total
+trainable parameters, with attention mechanisms
+and heads contributing 30% and 5%, respectively.
+As a consequence, a significant number of parame-
+ters are concentrated within the FFN layers, thereby
+posing challenges during pre-training with respect
+to computational cost and the model’s ability to
+achieve faster convergence. To address these issues,
+we propose to use a sharing scheme where the FFN
+parameters are shared across all transformer layers
+within the SLM. This enables us to significantly
+reduce the overall trainable parameters by 60% in
+our MobiLlama, compared to the large-base. Such
+a significant parameter reduction also enables us
+to increase the model capacity in terms of number
+of layers and hidden dimension size without any
+substantial increase in the training cost (see Tab. 1).
+Fig. 2 compares our architecture design with two
+baselines. In case of both baselines, a dedicated
+MLP block that consists of multiple FFN layers
+is used in each transformer layer. Instead, our ef-
+ficient MobiLlama design utilizes a single MLP
+block which is shared across different layers of
+transformer within the SLM. This helps in increas-
+ing the model capacity without any increase in the
+total number of trainable parameters in the model.
+Subset Tokens (Billion)
+Arxiv 30.00
+Book 28.86
+C4 197.67
+Refined-Web 665.01
+StarCoder 291.92
+StackExchange 21.75
+Wikipedia 23.90
+Total 1259.13
+Table 2: Data mix in Amber-Dataset.
+Hyperparameter Value
+Number Parameters 0.5 B
+Hidden Size 2048
+Intermediate Size (in MLPs) 5632
+Number of Attention Heads 32
+Number of Hidden Layers 22
+RMSNorm ϵ 1e−6
+Max Seq Length 2048
+V ocab Size 32000
+Table 3: MobiLlama architecture & hyperparameters.
+3.3 Towards Fully Transparent MobiLlama
+As discussed earlier, fully transparent open-source
+SLM development is desired to foster a more inclu-
+sive, data/model provenance, and reproducible col-
+laborative SLM research development environment.
+To this end, we present here pre-training dataset
+4
+
+===== PAGE 5 =====
+
+Model Name #Params HellaSwag Truthfulqa MMLU Arc_C CrowsPairs piqa race siqa winogrande Average
+gpt-neo-125m 0.15B 30.26 45.58 25.97 22.95 61.55 62.46 27.56 40.33 51.78 40.93
+tiny-starcoder 0.17B 28.17 47.68 26.79 20.99 49.68 52.55 25.45 38.28 51.22 37.86
+cerebras-gpt-256m 0.26B 28.99 45.98 26.83 22.01 60.52 61.42 27.46 40.53 52.49 40.69
+opt-350m 0.35b 36.73 40.83 26.02 23.55 64.12 64.74 29.85 41.55 52.64 42.22
+megatron-gpt2-345m 0.38B 39.18 41.51 24.32 24.23 64.82 66.87 31.19 40.28 52.96 42.81
+LiteLlama 0.46B 38.47 41.59 26.17 24.91 62.90 67.73 28.42 40.27 49.88 42.26
+gpt-sw3-356m 0.47B 37.05 42.55 25.93 23.63 61.59 64.85 32.15 41.56 53.04 42.48
+pythia-410m 0.51B 40.85 41.22 27.25 26.19 64.20 67.19 30.71 41.40 53.12 43.57
+xglm-564m 0.56B 34.64 40.43 25.18 24.57 62.25 64.85 29.28 42.68 53.03 41.87
+Lamini-GPT-LM 0.59B 31.55 40.72 25.53 24.23 63.09 63.87 29.95 40.78 47.75 40.83
+MobiLlama (Ours) 0.5B 52.52 38.05 26.45 29.52 64.03 72.03 33.68 40.22 57.53 46.00
+Lamini-GPT-LM 0.77B 43.83 40.25 26.24 27.55 66.12 69.31 37.12 42.47 56.59 45.49
+MobiLlama (Ours) 0.8B 54.09 38.48 26.92 30.20 64.82 73.17 33.37 41.60 57.45 46.67
+Table 4: State-of-the-art comparisons with existing < 1B params models on nine benchmarks. In case of around
+0.5B model series, our MobiLlama achieves a substantial gain of 2.4% in terms of average performance on nine
+benchmarks. Further, our MobiLlama 0.8B model achieves an average score of 46.67.
+and processing details, architecture design configu-
+ration with training details, evaluation benchmarks
+and metrics. In addition, we will publicly release
+complete training and evaluation codes along with
+intermediate model checkpoints.
+Pre-training Dataset and Processing: For pre-
+training, we use 1.2T tokens from LLM360 Amber
+dataset (Liu et al., 2023b). The Amber dataset
+provides a rich and varied linguistic landscape hav-
+ing different text types, topics, and styles. Tab. 2
+shows the data mix from Amber dataset gathered
+from various sources.
+Arxiv (30 Billion Tokens) subset is drawn from
+the repository of scientific papers, provides com-
+plex, domain-specific language and technical termi-
+nology, enriching the understanding of academic
+prose. Book (28.9 Billion Tokens)subset comprises
+tokens from a broad range of literature with di-
+verse narrative styles, cultural contexts, and rich
+vocabulary, deepening the grasp of storytelling and
+language nuances. C4 (197.7 Billion Tokens) is the
+Colossal Clean Crawled Corpus (C4) that offers a
+vast and cleaned selection of web text, providing
+a broad linguistic foundation that includes various
+registers, styles, and topics. Refined-Web (665 Bil-
+lion Tokens) subset is a curated web crawl and of-
+fers the model exposure to contemporary, informal,
+and varied internet language, enhancing the rele-
+vance and applicability to modern communication.
+StarCoder (291.9 Billion Tokens) subset is a vast
+collection used for code understanding featuring
+783GB of code across 86 programming languages.
+It includes GitHub issues, Jupyter notebooks, and
+commits, totaling approximately 250 billion tokens.
+These are meticulously cleaned and de-duplicated
+for training efficiency. StackExchange (21.8 Bil-
+lion Tokens) is from the network of Q&A websites,
+this subset aids the model in learning question-
+answering formats and technical discussions across
+diverse topics. Wikipedia (23.9 Billion Tokens)is
+an encyclopedia collection, it offers well-structured
+and factual content that helps the model to learn
+encyclopedic knowledge and formal writing styles.
+From the above-mentioned subsets, Arxiv, Book,
+C4, StackExchange and Wikipedia are sourced
+from RedPajama-v1 (Computer, 2023). The Amber
+dataset uses RefinedWeb (Penedo et al., 2023) data
+to replace common_crawl subset of RedPajama-v1.
+These subsets amount to 1259.13 billion tokens.
+Initially, raw data sourced from the above
+sources is tokenized using Huggingface LLaMA to-
+kenizer (Touvron et al., 2023). Subsequently, these
+tokens are organized into sequences with each con-
+taining 2048 tokens. To manage data, these se-
+quences are merged to the token sequences and
+divided the amalgamated dataset into 360 distinct
+segments. Each data segment, structured as a jsonl
+file, carries an array of token IDs along with a
+source identifier that denotes the originating dataset.
+Each data sample is designed to have 2049 tokens.
+Architecture Design: Our MobiLlama 0.5B com-
+prises a hidden size of 2048, an intermediate size
+of 5632 in its MLPs, and operates with 32 atten-
+tion heads across 22 hidden layers. It is designed
+to handle sequences up to 2048 tokens long, sup-
+ported by a vocabulary size of 32,000. The preci-
+sion in normalization is ensured by an RMSNorm
+epsilon of 1e−6 to obtain a more stable training. We
+utilize RoPE (Rotary Positional Embedding) (Su
+et al., 2024) to encode positional information in
+our MobiLlama. Similar to (Zhang et al., 2024),
+we employ a combination of Swish and Gated Lin-
+5
+
+===== PAGE 6 =====
+
+Model HellaSwag Truthfulqa MMLU Arc_C Average
+baseline1 42.44 38.46 25.08 26.18 33.04
+baseline2 42.15 38.70 25.73 26.10 33.17
+MobiLlama 44.47 40.12 26.48 26.53 34.40
+Table 5: Baseline comparison on four benchmarks.
+Here, both the baselines and our MobiLlama comprise
+the same parameters (0.5B) and are pre-trained on 100B
+tokens from Amber. Our MobiLlama achieves favorable
+performance compared to the two baselines, while oper-
+ating on a similar training budget.
+ear Units together as activation functions. Tab. 3
+presents details of our model configuration. We
+also derive a 0.8B version from our MobiLlama by
+widening the shared FFN design. Compared to the
+0.5B model, our 0.8B design increases the hidden
+dimension size to 2532 and the intermediate size to
+11,080 while the rest of the configuration is same.
+For pre-training of our MobiLlama, we use a
+public cluster having 20 GPU nodes each equipped
+with 8 NVIDIA A100 GPUs with 80 GB mem-
+ory each and 800 Gbps interconnect for model
+training. Each GPU is interconnected through 8
+NVLink links, complemented by a cross-node con-
+nection configuration of 2 port 200 Gb/sec (4 ×
+HDR) InfiniBand, optimizing the model’s training
+process. To further enhance the training efficiency,
+we employ flash-attention mechanism and follow
+the pre-training hyper-parameters established by
+the LLaMA (Touvron et al., 2023) model. Our
+MobiLlama model’s training is performed using
+the AdamW optimizer, leveraging hyperparameters
+β1 = 0 .9, β2 = 0 .95, with an initial learning rate
+of η = 3 e−4. This rate follows a cosine learning
+rate schedule, tapering to a final rate of η = 3e−5.
+We further incorporate a weight decay of 0.1 and
+apply gradient clipping at 1.0 with a warm-up pe-
+riod over 2, 000 steps. Adapting to our hardware
+configuration of 20 GPU nodes, we optimize the
+pre-training batch size to 800 (160 × 5), achieving
+a throughput of approximately 14k-15k tokens per
+second on a single GPU. During our model pre-
+training, we save intermediate checkpoints after
+every 3.3B tokens which will be publicly released.
+Evaluation Benchmarks and Metrics:
+For a comprehensive performance evaluation,
+we use nine different benchmarks from the Open
+LLM Leaderboard1.
+HellaSwag (Zellers et al., 2019) assesses the
+model’s ability to predict the correct ending to
+a scenario from a set of possible continuations,
+1https://huggingface.co/spaces/HuggingFaceH4/open_llm_leaderboard
+thereby testing common sense reasoning. Truth-
+fulQA (Lin et al., 2021a) evaluates the model to
+provide truthful answers, focusing on its under-
+standing of facts and its ability to avoid decep-
+tion. MMLU (Hendrycks et al., 2020) measures
+the model’s broad knowledge across numerous sub-
+jects such as, humanities, science, technology, engi-
+neering and management. ARC_Challenge (Clark
+et al., 2018) tests complex reasoning with science
+questions. CrowsPairs (Nangia et al., 2020) evalu-
+ates the model’s biases by comparing sentences that
+differ only by the demographic group mentioned,
+aiming for fairness. PIQA (Bisk et al., 2020) eval-
+uates the model’s physical commonsense knowl-
+edge, requiring understanding of everyday physical
+processes. Race (Lai et al., 2017) assesses read-
+ing comprehension through multiple-choice ques-
+tions based on passages. SIQA (Sap et al., 2019)
+focuses on the model’s social commonsense rea-
+soning and its understanding of social dynamics.
+Winogrande (Sakaguchi et al., 2021) evaluates the
+model’s ability to resolve ambiguities in text, test-
+ing its commonsense reasoning.
+Following the Analysis-360 framework (Liu
+et al., 2023b) that is built on llm-harness (Gao et al.,
+2023), we conduct extensive evaluations under the
+standard settings with varying shots for detailed
+assessments, validating the model’s robustness and
+adaptability across diverse linguistic tasks. Follow-
+ing the standard evaluation protocol, our evaluation
+setting consists of 10, 25, 5 and 5 shot evaluation
+for Hellaswag, ARC_Challenge, Winogrande and
+MMLU, while zero-shot for rest of the benchmarks.
+4 Results
+Baseline Comparison: We first present a com-
+parison with the two baselines in Tab. 5) for 0.5B
+model series. For the baseline evaluation, we pre-
+train all the models on the same 100B tokens from
+the Amber dataset and report the results on four
+benchmarks: HellaSwag, TruthfulQA, MMLU, and
+Arc_C. Our MobiLlama achieves favourable per-
+formance compared to the two baselines by achiev-
+ing an average score of 34.4 over the four bench-
+marks. We note that this performance improvement
+is achieved without any significant increase in the
+training cost (see Tab. 1), highlighting the merits
+of the proposed SLM design.
+State-of-the-art Comparison: We compare our
+MobiLlama 0.5B and 0.8B with existing SLMs
+having comparable (less than 1B) parameters: gpt-
+6
+
+===== PAGE 7 =====
+
+Platform Model #ParamsPrecisionAvg Tokens/Sec Avg Memory Avg Battery Consumption CPU
+(↓) ( ↑) Consumption ( ↓) /1k Tokens ( ↓) Utilization ( ↓)
+RTX2080Ti
+Llama2 7B bf16 14.85 27793 MB 135.51 mAH 31.62%
+Phi2 2.7B bf16 32.19 12071 MB 59.13 mAH 24.73%
+large-base 1.2B bf16 50.61 6254 MB 18.91 mAH 18.25%
+MobiLlama0.5B bf16 63.38 3046MB 8.19mAH 14.79%
+CPU-i7
+Llama2 7B 4bit 5.96 4188 MB 73.5 mAH 49.16%
+Phi2 2.7B 4bit 22.14 1972 MB 27.36 mAH 34.92%
+large-base 1.2B 4bit 29.23 1163 MB 10.81 mAH 30.84%
+MobiLlama0.5B 4bit 36.32 799MB 4.86mAH 24.64%
+Snapdragon-685
+Llama2 7B 4bit 1.193 4287 MB 10.07 mAH 77.41%
+Phi2 2.7B 4bit 2.882 1893 MB 14.61 mAH 56.82%
+large-base 1.2B 4bit 6.687 780 MB 6.00 mAH 17.15%
+MobiLlama0.5B 4bit 7.021 770MB 5.32mAH 13.02%
+Table 6: Comparison in terms of efficiency and resource consumption on different low-end hardware devices. We
+show the comparison on: a PC with RTX-2080Ti GPU, a laptop with i7 CPU and a smartphone with Snapdragon-685
+processor. In addition to our large-base model, we also present the comparison with Llama2 7B and Phi2 2.7B. In
+case of CPU and smartphone, we use 4-bit GGUF format of the corresponding models, whereas the original models
+are deployed and tested on PC with RTX-2080Ti GPU. The different metrics measure the model’s operational
+efficiency, model’s footprint in the device’s RAM and the energy efficiency of processing 1,000 tokens. Our
+MobiLlama performs favorably in terms of efficiency on these low-end hardware devices. We note that both Phi2
+and Llama2 are not fully transparent in that the complete data pipeline for pre-training is not publicly available.
+Model #Slice #ParamsHellaS Arc_C piqa winoAverage
+OPT-1.3B 30% 0.91B 39.81 25.77 60.77 54.745.26
+OPT-6.7B 30% 4.69B 54.56 29.01 68.61 60.6953.21
+Llama-2-7B30% 4.9B 49.62 31.23 63.55 61.3351.43
+Phi2-2.7B 30% 1.89B 47.56 30.29 65.94 63.1451.73
+Dense0.5B 52.5229.5272.0357.5352.90MobiLlamaDense0.8B 54.0930.2073.1757.4553.72
+Table 7: Comparison on 4 open LLM benchmarks when
+parameters are sliced down to 30% using Wiki2Text
+dataset, following (Ashkboos et al., 2024).
+neo (Black et al., 2021), tiny-starcoder (Li et al.,
+2023a), cerebras-gpt (Dey et al., 2023), opt (Zhang
+et al., 2022), megatron-gpt-2 (Shoeybi et al., 2019),
+LiteLlama, gpt-sw3, pythia (Biderman et al., 2023),
+xglm (Lin et al., 2021b), Lamini-LM (Wu et al.,
+2023). Among existing methods falling around
+0.5B model series category, pythia-410m achieves
+an average score of 43.57. Our MobiLlama 0.5B
+model achieves superior performance with an av-
+erage score of 46.0, outperforming pythia-410m
+by 2.4% in terms of average performance on nine
+benchmarks. Notably, MobiLlama achieves su-
+perior performance on the HellaSwag benchmark
+which is designed to evaluate the model’s capabili-
+ties in the NLP text completion task. Further, Mo-
+biLlama also performs favorably on commonsense
+reasoning tasks with superior results on piqa and
+winogrande benchmarks. Further, our MobiLlama
+0.8B model achieves an average score of 49.06.
+Efficiency Comparison: We present the compar-
+ison of our model in terms of efficiency and re-
+Model GQA SQA TextQA MME
+MobiLlama-V 58.5 53.1 41.4 1191.9
+Table 8: Quantitative performance of our multimodal
+design, MobiLlama-V 0.8B, on different benchmarks.
+source consumption on various low-end hardware
+platforms: a PC with RTX-2080Ti GPU, a laptop
+with i7 CPU, and a smartphone with Snapdragon-
+685 processor. Tab. 6 shows the comparison of our
+MobiLlama 0.5B with large-base 1.2B, Llama2-
+7B (Touvron et al., 2023) and Phi2-2.7B (Li et al.,
+2023b) model, in terms of the average processing
+speed in tokens per second (Average Tokens/Sec),
+average memory consumption (Avg Memory Con-
+sumption) in megabytes (MB), and the average
+battery consumption (Average Battery Consump-
+tion/1000 Tokens) in milliampere-hours (mAH).
+Our MobiLlama performs favorably in terms of
+efficiency across different hardware platforms.
+We further perform an efficiency comparison to
+a recent post-training sparsification scheme (Ashk-
+boos et al., 2024), where each weight matrix is sub-
+stituted with a smaller (dense) matrix, thereby re-
+ducing dimensions of the embeddings in the model.
+In such a scheme, the parameters of the original
+LLM are reduced significantly up to 70% followed
+by post-slicing fine-tuning using a dataset such as
+WikiText-2 (Merity et al., 2016). Tab. 7 shows the
+comparison of our MobiLlama with existing LLMs
+(e.g., Llama-2-7B, OPT-6.7B) on four benchmarks
+following (Ashkboos et al., 2024). Our MobiL-
+7
+
+===== PAGE 8 =====
+
+Model #Params HellaSwag Truthfulqa MMLU Arc_C CrowsPairs piqa race siqa winogrande Average
+Boomer 1B 31.62 39.42 25.42 22.26 61.26 57.99 28.99 40.32 50.98 39.80
+Pythia-Dedup 1B 49.63 38.92 24.29 29.09 67.11 70.23 32.44 42.63 53.98 45.36
+Falcon-RW 1B 63.12 35.96 25.36 35.06 69.04 74.10 36.07 40.23 61.88 48.98
+TinyLlama 1.1B 60.22 37.59 26.11 33.61 70.60 73.28 36.45 41.65 59.18 48.74
+OLMo 1.2B 62.50 32.94 25.86 34.45 69.59 73.70 36.74 41.14 58.90 48.42
+Cerebras-GPT 1.3B 38.51 42.70 26.66 26.10 63.67 66.75 30.33 42.42 53.59 43.41
+Lamini 1.3B 38.05 36.43 28.47 26.62 64.62 67.89 33.39 43.19 50.59 43.25
+OPT 1.3B 54.50 38.67 24.63 29.6 70.70 72.47 34.16 42.47 59.74 47.43
+GPT-NEO 1.3B 48.49 39.61 24.82 31.31 65.67 71.05 34.06 41.81 57.06 45.98
+Pythia-Deduped 1.4B 55.00 38.63 25.45 32.59 67.33 72.68 34.64 42.68 56.90 47.32
+large-base 1.2B 62.99 35.90 24.79 34.55 68.49 75.57 35.31 41.96 62.03 49.06
+Table 9: Comprehensive comparisons with existing < 2B params fully open-source LLM models on 9 benchmarks.
+Our 1.2B large-base model pre-trained on 1.2T tokens achieves superior performance compared to both the recent
+OLMo 1.17B model (Groeneveld et al., 2024) and TinyLlama 1.1B model (Zhang et al., 2024), which are pre-trained
+on a substantially larger data of 3T tokens.
+On a bright sunny day ...
+10yearsago,Iwasstandinginthemiddleofmybackyardwithanemptybeerbottleandsomeoldmagazines.Ihadjustfinishedreading“TheArtist’sWay”byJuliaCameronwhenshesaidsomethingthatstucktomeformanymonthsafterward:Theartistisnotalwaysright;heorhermayevenhavebeenwrongatonetimebuthassincechangedhismindabout.....
+Write a Python function that calculates the factorial of a given number.Sure,here'saPythonfunctionthatcalculatesthefactorialofagivennumber:```pythondeffactorial(n):ifn==0:return1else:returnn*factorial(n-1)```
+Explain the economic factors contributing to the rise or fall of a country's currency.Some of the factors that contribute to the rise or fall of a country's currency includes : 1.Interest rates: The interest rates in a country's currency can affect …….2.Exchange rates: The exchange rates between the currency of a …..3.Central Bank policies: The policies of the central …..4.Political instability: Political instability can……
+Write steps on how to cook a pizza?Sure! Here are the steps:1. Preheat the oven to 400°F (200°C) and line a baking sheet with parchment paper.2. Spread the pizza dough with a thin layer of tomato sauce, mozzarella cheese, and basil.3. Bake the pizza for 10-12 minutes, or until the cheese is melted and the crust is golden brown.……..
+Figure 3: Example responses from our MobiLlama across a variety of tasks, including creative storytelling, coding
+exercises, economic analysis, and cooking instructions. The responses highlight the models’ ability to engage with
+both abstract concepts and practical, step-by-step processes, demonstrating its broad applicability.
+Input Image
+Human : Describe this image in detail.
+MobiLlama :Theimagedepictsagroupofpeoplewalkingthrougharocky,hillyterrain,likelyonamountaintrail.Thereareatleast13peopleinthescene,withsomeofthemcarryingbackpacks.Thegroupisspreadoutalongthetrail,withsomepeoplewalkingclosertothecameraandothersfurtherinthebackground.Thepeopleappeartobeenjoyingtheirwalk,possiblyexploringtheareaortakingabreakfromtheirjourney.
+Input Image
+Human : What does the provided image contain ?MobiLlama :Theimageshowsatraywithavarietyoffooditems,includingasandwich,fruit,vegetables,andasauce.Therearealsonapkinsandaplatewithasmallmeal.
+Input Image
+Human : What are people in image doing ?MobiLlama :Thesepeopleintheimageareperformingatrickwheretheyareinmid-air,balancingontheirtoes.Theyarealljumpingtogether,showcasingtheirathleticismandskillinbalancingandperformingtricks.Theyareallintheair,withtheirfeethangingofftheground,demonstratingtheirabilitytomaintainbalanceandcontrolduringtheperformance.
+Input Image
+Human : Write a suitable poem for this scene.MobiLlama :As the night falls,The bridge stands tall,A medieval wonder,A sight to behold,In the midst ofthe forest,A bridge that holds the heart,Of those who pass by,And those who walk on it,A bridge that transcends,The world, and the time.
+Human : How to prepare the food shown in an image ?MobiLLama:Tomakethisfood,youwouldneedtoprepareasandwich,whichtypicallyinvolvesspreadingasauceon…..
+Figure 4: Example responses of MobiLlama-V in responding to visual stimuli across a range of scenarios.
+lama 0.5B and 0.8B models perform favorably
+against representative LLMs, with an average score
+of 53.72 computed over four benchmarks. These re-
+sults highlight the potential of designing new fully
+transparent SLMs that can achieve comparable ca-
+pabilities of their larger sliced model counterparts.
+Multimodal MobiLlama: We further build a mul-
+timodal model on top of ourMobiLlama by combin-
+ing it with a vision encoder to develop a general-
+purpose visual assistant having visual reasoning
+capabilities. Our multimodal model, MobiLlama-
+V , is trained by bridging the visual encoder of
+CLIP (Radford et al., 2021) with the language
+decoder of our MobiLlama, and fine-tuning it in
+an end-to-end fashion on a 665k vision-language
+instruction set (Liu et al., 2023a). We conduct
+evaluation on GQA (Hudson and Manning, 2019),
+SQA (Lu et al., 2022), TextQA (Singh et al., 2019),
+and MME (Fu et al., 2023). Tab. 8 shows the per-
+formance of MobiLlama-V 0.8B model.
+Qualitative Analysis: Fig. 3 shows example re-
+sponses obtained when interacting withMobiLlama
+0.5B with conversation capabilities. We show ex-
+amples covering different tasks such as, text com-
+pletion, code generation and conversation capabil-
+ities. Our model generates faithful responses to
+these diverse interactions. Fig. 4 shows examples
+demonstrating visual reasoning capabilities of our
+multimodal MobiLlama-V . For instance, MobiL-
+lama-V accurately describes the atypical aspects of
+the image when asked to describe the given image.
+Evaluating Large-base Model: As discussed ear-
+8
+
+===== PAGE 9 =====
+
+lier, we strive to develop fully transparent models
+for democratization of SLMs and fostering future
+research. To this end, we compare our large-base
+1.2B with existing fully transparent SLMs falling
+within the less than 2B category. Tab. 9 shows that
+compared to recent OLMo and TinyLlama that are
+pre-trained on a larger dataset of 3T tokens, our
+large-base 1.2B model pre-trained on 1.2T tokens
+achieves favourable results with an average score
+of 49.06 over nine benchmarks. We hope that our
+large-base model will serve as a solid baseline and
+help ease future research in SLM development.
+5 Conclusion
+We present a fully transparent SLM, MobiLlama,
+that alleviates redundancy in the transformer block.
+Within MobiLlama, we propose to utilize a shared
+FFN design for all the blocks within the SLM. We
+evaluate MobiLlama on nine benchmarks, achiev-
+ing favourable results compared to existing meth-
+ods falling under less than 1B category. We also
+build a multimodal model on top of MobiLlama
+SLM to demonstrate visual reasoning capabilities.
+Limitation and Future Direction: A potential
+direction is to further improve MobiLlama for en-
+hanced context comprehension. While MobiLlama
+offers a fully transparent SLM framework, a follow-
+up study to understand any misrepresentations and
+biases is desired to improve model’s robustness.
+6 Acknowledgement
+The computations were enabled by the Berzelius re-
+source provided by the Knut and Alice Wallenberg
+Foundation at the National Supercomputer Centre.
+We thank Sahal Shaji Mullappilly and Muhammad
+Maaz for their support in the evaluations on mobile
+platform and VLM training.
+References
+Ebtesam Almazrouei, Hamza Alobeidli, Abdulaziz Al-
+shamsi, Alessandro Cappelli, Ruxandra Cojocaru,
+Mérouane Debbah, Étienne Goffinet, Daniel Hesslow,
+Julien Launay, Quentin Malartic, Daniele Mazzotta,
+Badreddine Noune, Baptiste Pannier, and Guilherme
+Penedo. 2023. The falcon series of open language
+models.
+Saleh Ashkboos, Maximilian L Croci, Marcelo Gen-
+nari do Nascimento, Torsten Hoefler, and James
+Hensman. 2024. Slicegpt: Compress large language
+models by deleting rows and columns. arXiv preprint
+arXiv:2401.15024.
+Srinadh Bhojanapalli, Ayan Chakrabarti, Andreas Veit,
+Michal Lukasik, Himanshu Jain, Frederick Liu, Yin-
+Wen Chang, and Sanjiv Kumar. 2021. Leveraging re-
+dundancy in attention with reuse transformers. arXiv
+preprint arXiv:2110.06821.
+Stella Biderman, Hailey Schoelkopf, Quentin Gregory
+Anthony, Herbie Bradley, Kyle O’Brien, Eric Hal-
+lahan, Mohammad Aflah Khan, Shivanshu Purohit,
+USVSN Sai Prashanth, Edward Raff, et al. 2023.
+Pythia: A suite for analyzing large language mod-
+els across training and scaling. In International
+Conference on Machine Learning, pages 2397–2430.
+PMLR.
+Yonatan Bisk, Rowan Zellers, Jianfeng Gao, Yejin Choi,
+et al. 2020. Piqa: Reasoning about physical com-
+monsense in natural language. In Proceedings of the
+AAAI conference on artificial intelligence, volume 34,
+pages 7432–7439.
+Sid Black, Gao Leo, Phil Wang, Connor Leahy,
+and Stella Biderman. 2021. GPT-Neo: Large
+Scale Autoregressive Language Modeling with Mesh-
+Tensorflow. If you use this software, please cite it
+using these metadata.
+Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot,
+Ashish Sabharwal, Carissa Schoenick, and Oyvind
+Tafjord. 2018. Think you have solved question an-
+swering? try arc, the ai2 reasoning challenge. arXiv
+preprint arXiv:1803.05457.
+Together Computer. 2023. Redpajama: An open source
+recipe to reproduce llama training dataset.
+Tri Dao. 2023. Flashattention-2: Faster attention with
+better parallelism and work partitioning. arXiv
+preprint arXiv:2307.08691.
+Nolan Dey, Gurpreet Gosal, Hemant Khachane, William
+Marshall, Ribhu Pathria, Marvin Tom, Joel Hestness,
+et al. 2023. Cerebras-gpt: Open compute-optimal
+language models trained on the cerebras wafer-scale
+cluster. arXiv preprint arXiv:2304.03208.
+Elias Frantar, Saleh Ashkboos, Torsten Hoefler, and
+Dan Alistarh. 2022. Gptq: Accurate post-training
+quantization for generative pre-trained transformers.
+arXiv preprint arXiv:2210.17323.
+Chaoyou Fu, Peixian Chen, Yunhang Shen, Yulei Qin,
+Mengdan Zhang, Xu Lin, Jinrui Yang, Xiawu Zheng,
+Ke Li, Xing Sun, et al. 2023. Mme: A comprehensive
+evaluation benchmark for multimodal large language
+models. arXiv preprint arXiv:2306.13394.
+Leo Gao, Jonathan Tow, Baber Abbasi, Stella Biderman,
+Sid Black, Anthony DiPofi, Charles Foster, Laurence
+Golding, Jeffrey Hsu, Alain Le Noac’h, Haonan Li,
+Kyle McDonell, Niklas Muennighoff, Chris Ociepa,
+Jason Phang, Laria Reynolds, Hailey Schoelkopf,
+Aviya Skowron, Lintang Sutawika, Eric Tang, An-
+ish Thite, Ben Wang, Kevin Wang, and Andy Zou.
+2023. A framework for few-shot language model
+evaluation.
+9
+
+===== PAGE 10 =====
+
+Amir Gholami, Sehoon Kim, Zhen Dong, Zhewei Yao,
+Michael W Mahoney, and Kurt Keutzer. 2022. A
+survey of quantization methods for efficient neural
+network inference. In Low-Power Computer Vision,
+pages 291–326. Chapman and Hall/CRC.
+Dirk Groeneveld, Iz Beltagy, Pete Walsh, Akshita Bha-
+gia, Rodney Kinney, Oyvind Tafjord, A. Jha, Hamish
+Ivison, Ian Magnusson, Yizhong Wang, Shane Arora,
+David Atkinson, Russell Authur, Khyathi Raghavi
+Chandu, Arman Cohan, Jennifer Dumas, Yanai
+Elazar, Yuling Gu, Jack Hessel, Tushar Khot, William
+Merrill, Jacob Daniel Morrison, Niklas Muennighoff,
+Aakanksha Naik, Crystal Nam, Matthew E. Peters,
+Valentina Pyatkin, Abhilasha Ravichander, Dustin
+Schwenk, Saurabh Shah, Will Smith, Emma Strubell,
+Nishant Subramani, Mitchell Wortsman, Pradeep
+Dasigi, Nathan Lambert, Kyle Richardson, Luke
+Zettlemoyer, Jesse Dodge, Kyle Lo, Luca Soldaini,
+Noah A. Smith, and Hanna Hajishirzi. 2024. Olmo:
+Accelerating the science of language models. arXiv
+preprint.
+Dan Hendrycks, Collin Burns, Steven Basart, Andy Zou,
+Mantas Mazeika, Dawn Song, and Jacob Steinhardt.
+2020. Measuring massive multitask language under-
+standing. arXiv preprint arXiv:2009.03300.
+Torsten Hoefler, Dan Alistarh, Tal Ben-Nun, Nikoli Dry-
+den, and Alexandra Peste. 2021. Sparsity in deep
+learning: Pruning and growth for efficient inference
+and training in neural networks. The Journal of Ma-
+chine Learning Research, 22(1):10882–11005.
+Drew A Hudson and Christopher D Manning. 2019.
+Gqa: A new dataset for real-world visual reasoning
+and compositional question answering. In Proceed-
+ings of the IEEE/CVF conference on computer vision
+and pattern recognition, pages 6700–6709.
+Guokun Lai, Qizhe Xie, Hanxiao Liu, Yiming Yang,
+and Eduard Hovy. 2017. Race: Large-scale reading
+comprehension dataset from examinations. arXiv
+preprint arXiv:1704.04683.
+Raymond Li, Loubna Ben Allal, Yangtian Zi, Niklas
+Muennighoff, Denis Kocetkov, Chenghao Mou, Marc
+Marone, Christopher Akiki, Jia Li, Jenny Chim,
+Qian Liu, Evgenii Zheltonozhskii, Terry Yue Zhuo,
+Thomas Wang, Olivier Dehaene, Mishig Davaadorj,
+Joel Lamy-Poirier, João Monteiro, Oleh Shliazhko,
+Nicolas Gontier, Nicholas Meade, Armel Zebaze,
+Ming-Ho Yee, Logesh Kumar Umapathi, Jian Zhu,
+Benjamin Lipkin, Muhtasham Oblokulov, Zhiruo
+Wang, Rudra Murthy, Jason Stillerman, Siva Sankalp
+Patel, Dmitry Abulkhanov, Marco Zocca, Manan Dey,
+Zhihan Zhang, Nour Fahmy, Urvashi Bhattacharyya,
+Wenhao Yu, Swayam Singh, Sasha Luccioni, Paulo
+Villegas, Maxim Kunakov, Fedor Zhdanov, Manuel
+Romero, Tony Lee, Nadav Timor, Jennifer Ding,
+Claire Schlesinger, Hailey Schoelkopf, Jan Ebert, Tri
+Dao, Mayank Mishra, Alex Gu, Jennifer Robinson,
+Carolyn Jane Anderson, Brendan Dolan-Gavitt, Dan-
+ish Contractor, Siva Reddy, Daniel Fried, Dzmitry
+Bahdanau, Yacine Jernite, Carlos Muñoz Ferrandis,
+Sean Hughes, Thomas Wolf, Arjun Guha, Leandro
+von Werra, and Harm de Vries. 2023a. Starcoder:
+may the source be with you!
+Yuanzhi Li, Sébastien Bubeck, Ronen Eldan, Allie
+Del Giorno, Suriya Gunasekar, and Yin Tat Lee.
+2023b. Textbooks are all you need ii: phi-1.5 techni-
+cal report. arXiv preprint arXiv:2309.05463.
+Stephanie Lin, Jacob Hilton, and Owain Evans. 2021a.
+Truthfulqa: Measuring how models mimic human
+falsehoods. arXiv preprint arXiv:2109.07958.
+Xi Victoria Lin, Todor Mihaylov, Mikel Artetxe, Tianlu
+Wang, Shuohui Chen, Daniel Simig, Myle Ott, Na-
+man Goyal, Shruti Bhosale, Jingfei Du, Ramakanth
+Pasunuru, Sam Shleifer, Punit Singh Koura, Vishrav
+Chaudhary, Brian O’Horo, Jeff Wang, Luke Zettle-
+moyer, Zornitsa Kozareva, Mona T. Diab, Veselin
+Stoyanov, and Xian Li. 2021b. Few-shot learn-
+ing with multilingual language models. CoRR,
+abs/2112.10668.
+Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae
+Lee. 2023a. Visual instruction tuning.
+Zhengzhong Liu, Aurick Qiao, Willie Neiswanger,
+Hongyi Wang, Bowen Tan, Tianhua Tao, Junbo Li,
+Yuqi Wang, Suqi Sun, Omkar Pangarkar, Richard Fan,
+Yi Gu, Victor Miller, Yonghao Zhuang, Guowei He,
+Haonan Li, Fajri Koto, Liping Tang, Nikhil Ranjan,
+Zhiqiang Shen, Xuguang Ren, Roberto Iriondo, Cun
+Mu, Zhiting Hu, Mark Schulze, Preslav Nakov, Tim
+Baldwin, and Eric P. Xing. 2023b. Llm360: Towards
+fully transparent open-source llms.
+Ilya Loshchilov and Frank Hutter. 2017. Decou-
+pled weight decay regularization. arXiv preprint
+arXiv:1711.05101.
+Pan Lu, Swaroop Mishra, Tanglin Xia, Liang Qiu, Kai-
+Wei Chang, Song-Chun Zhu, Oyvind Tafjord, Peter
+Clark, and Ashwin Kalyan. 2022. Learn to explain:
+Multimodal reasoning via thought chains for science
+question answering. Advances in Neural Information
+Processing Systems, 35:2507–2521.
+Stephen Merity, Caiming Xiong, James Bradbury, and
+Richard Socher. 2016. Pointer sentinel mixture mod-
+els. arXiv preprint arXiv:1609.07843.
+Nikita Nangia, Clara Vania, Rasika Bhalerao, and
+Samuel R Bowman. 2020. Crows-pairs: A chal-
+lenge dataset for measuring social biases in masked
+language models. arXiv preprint arXiv:2010.00133.
+Bowen Pan, Rameswar Panda, Rogerio Schmidt Feris,
+and Aude Jeanne Oliva. 2023. Interpretability-aware
+redundancy reduction for vision transformers. US
+Patent App. 17/559,053.
+Guilherme Penedo, Quentin Malartic, Daniel Hesslow,
+Ruxandra Cojocaru, Alessandro Cappelli, Hamza
+Alobeidli, Baptiste Pannier, Ebtesam Almazrouei,
+and Julien Launay. 2023. The RefinedWeb dataset
+for Falcon LLM: outperforming curated corpora
+10
+
+===== PAGE 11 =====
+
+with web data, and web data only. arXiv preprint
+arXiv:2306.01116.
+Telmo Pessoa Pires, António V Lopes, Yannick As-
+sogba, and Hendra Setiawan. 2023. One wide
+feedforward is all you need. arXiv preprint
+arXiv:2309.01826.
+Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya
+Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sas-
+try, Amanda Askell, Pamela Mishkin, Jack Clark,
+et al. 2021. Learning transferable visual models from
+natural language supervision. In International confer-
+ence on machine learning, pages 8748–8763. PMLR.
+Keisuke Sakaguchi, Ronan Le Bras, Chandra Bhagavat-
+ula, and Yejin Choi. 2021. Winogrande: An adver-
+sarial winograd schema challenge at scale. Commu-
+nications of the ACM, 64(9):99–106.
+Maarten Sap, Hannah Rashkin, Derek Chen, Ronan
+LeBras, and Yejin Choi. 2019. Socialiqa: Com-
+monsense reasoning about social interactions. arXiv
+preprint arXiv:1904.09728.
+Mohammad Shoeybi, Mostofa Patwary, Raul Puri,
+Patrick LeGresley, Jared Casper, and Bryan Catan-
+zaro. 2019. Megatron-lm: Training multi-billion
+parameter language models using model parallelism.
+arXiv preprint arXiv:1909.08053.
+Amanpreet Singh, Vivek Natarajan, Meet Shah,
+Yu Jiang, Xinlei Chen, Dhruv Batra, Devi Parikh,
+and Marcus Rohrbach. 2019. Towards vqa models
+that can read. In Proceedings of the IEEE/CVF con-
+ference on computer vision and pattern recognition,
+pages 8317–8326.
+Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan,
+Wen Bo, and Yunfeng Liu. 2024. Roformer: En-
+hanced transformer with rotary position embedding.
+Neurocomputing, 568:127063.
+Hugo Touvron, Louis Martin, Kevin Stone, Peter Al-
+bert, Amjad Almahairi, Yasmine Babaei, Nikolay
+Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti
+Bhosale, et al. 2023. Llama 2: Open founda-
+tion and fine-tuned chat models. arXiv preprint
+arXiv:2307.09288.
+Minghao Wu, Abdul Waheed, Chiyu Zhang, Muham-
+mad Abdul-Mageed, and Alham Fikri Aji. 2023.
+Lamini-lm: A diverse herd of distilled models from
+large-scale instructions. CoRR, abs/2304.14402.
+Guangxuan Xiao, Ji Lin, Mickael Seznec, Hao Wu,
+Julien Demouth, and Song Han. 2023. Smoothquant:
+Accurate and efficient post-training quantization for
+large language models. In International Conference
+on Machine Learning, pages 38087–38099. PMLR.
+Can Xu, Qingfeng Sun, Kai Zheng, Xiubo Geng,
+Pu Zhao, Jiazhan Feng, Chongyang Tao, and Daxin
+Jiang. 2023. Wizardlm: Empowering large lan-
+guage models to follow complex instructions. arXiv
+preprint arXiv:2304.12244.
+Rowan Zellers, Ari Holtzman, Yonatan Bisk, Ali
+Farhadi, and Yejin Choi. 2019. Hellaswag: Can a
+machine really finish your sentence? arXiv preprint
+arXiv:1905.07830.
+Peiyuan Zhang, Guangtao Zeng, Tianduo Wang, and
+Wei Lu. 2024. Tinyllama: An open-source small
+language model. arXiv preprint arXiv:2401.02385.
+Susan Zhang, Stephen Roller, Naman Goyal, Mikel
+Artetxe, Moya Chen, Shuohui Chen, Christopher De-
+wan, Mona Diab, Xian Li, Xi Victoria Lin, Todor Mi-
+haylov, Myle Ott, Sam Shleifer, Kurt Shuster, Daniel
+Simig, Punit Singh Koura, Anjali Sridhar, Tianlu
+Wang, and Luke Zettlemoyer. 2022. Opt: Open pre-
+trained transformer language models.
+Wayne Xin Zhao, Kun Zhou, Junyi Li, Tianyi Tang,
+Xiaolei Wang, Yupeng Hou, Yingqian Min, Beichen
+Zhang, Junjie Zhang, Zican Dong, et al. 2023. A
+survey of large language models. arXiv preprint
+arXiv:2303.18223.
+Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan
+Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin,
+Zhuohan Li, Dacheng Li, Eric Xing, et al. 2024.
+Judging llm-as-a-judge with mt-bench and chatbot
+arena. Advances in Neural Information Processing
+Systems, 36.
+Xunyu Zhu, Jian Li, Yong Liu, Can Ma, and Weip-
+ing Wang. 2023. A survey on model compres-
+sion for large language models. arXiv preprint
+arXiv:2308.07633.
+A Appendix
+A.1 MobiLlama-Chat
+We also developed the fine-tuned versions of
+MobiLlama-0.5B and MobiLlama-1.2B, namely
+MobiLlama-0.5B-Chat and MobiLlama-1.2B-Chat.
+We used the similar fine-tuning dataset and hyper-
+parameters as AmberChat (Liu et al., 2023b) to
+train our models. We use FastChat (Zheng et al.,
+2024) to fine-tune our models on WizzardLM-
+196K as used by WizardLM (Xu et al., 2023). We
+trained our base models for 3 epochs on 8 A100s
+(80G), keeping the learning rate as 2 × 10−5, gra-
+dient accumulation steps as 16, and warmup ratio
+as 0.04.
+11
+
+===== PAGE 12 =====
+
+A.2 Qualitative Examples
+Reasoning:
+Human: What are the key benefits of practicing mindfulness meditation?
+MobiLlama-0.5B:
+Practicing mindfulness meditation can have several benefits, including:
+1. Reduced stress and anxiety: Mindfulness meditation can help reduce stress and anxiety by
+focusing on the present moment and letting go of distractions.
+2. Improved focus and concentration: Mindfulness meditation can help improve focus and concen-
+tration by focusing on the present moment and letting go of distractions.
+3. Better sleep: Mindfulness meditation can help improve sleep by reducing stress and anxiety and
+promoting relaxation.
+4. Better mood: Mindfulness meditation can help improve mood by reducing stress and anxiety
+and promoting relaxation.
+5. Better relationships: Mindfulness meditation can help improve relationships by reducing stress
+and anxiety and promoting relaxation.
+Knowledge:
+Human: What are some ways to reduce the carbon footprint of your home?
+MobiLlama-0.5B:
+Reducing the carbon footprint of your home can be achieved through several ways. Here are some
+tips:
+1. Use energy-efficient lighting and appliances.
+2. Install energy-efficient windows and doors.
+3. Use energy-efficient appliances and lighting.
+4. Reduce the use of paper and other non-biodegradable materials.
+5. Use energy-efficient appliances and lighting.
+6. Reduce the use of plastic and other single-use materials.
+7. Use energy-efficient appliances and lighting.
+8. Reduce the use of paper and other single-use materials.
+Reasoning:
+Human: How do diverse ecosystems contribute to the overall health of the planet?
+MobiLlama-0.5B:
+Different cultures and traditions contribute to the diversity of the world in many ways. For example,
+the Chinese culture is known for its emphasis on family, tradition, and hospitality. The Japanese
+culture is known for its emphasis on individualism, creativity, and innovation. The Indian culture is
+known for its emphasis on tradition, devotion, and spirituality.
+12
+
+===== PAGE 13 =====
+
+Story Creation:
+Human: Create the opening paragraph of a suspenseful thriller: In the dimly lit alley, Detective
+Miller knew something was off. The air was thick with tension, and as he turned the corner, he
+discovered a hidden door leading to a world of
+MobiLlama-0.8B:
+icy secrets that would soon be revealed in his own life."
+"The first thing I noticed about this book is how well-written it really felt like an actual story from
+beginning to end," said one reviewer on Goodreads who also gave her rating for "10 out of ten
+stars". Another reviewed by another author wrote:"This novel has been described many times over
+but never quite captured my attention until now...I’m not sure if you can put your finger on what
+makes me love these books so much or maybe just because they are such good reads! They have all
+sorts of twists along their way which keeps them fresh every time!"
+Technological Evolution:
+Human: Once people considered Artificial Intelligence is something impossible to achieve, but now
+MobiLlama-0.8B:
+The future of artificial intelligence: AI will be used in every aspect from medicine and healthcare
+through automation for manufacturing industries like robotics or even autonomous driving systems
+that can drive themselves without human intervention (or at least with less risk).
+Analytical Thinking:
+Human: Create a concept for an album cover that represents the concept of time travel through
+music
+MobiLlama-0.8B:
+and art, or something similar to this:
+Time Travel Through Music – A song with lyrics about how you can go back in history if only one
+person would listen. . . or maybe it’s just me! I don’t know what my favorite is yet but there are so
+many songs out now on YouTube where people talk about going backwards into their past lives
+(like “Time Machine” by The Beatles) which makes sense because they were talking about getting
+ridiculous amounts of money from someone who was dead when we get here today; however some
+artists have gone further than simply saying "I want all your stuff" like Kanye West did last year...he
+actually went as far as creating his own musical instrument called ’The Tidal Wave’. It basically
+looks exactly like he does at times during his live shows except instead of being able to see himself
+perform inside another body while singing along, users will be transported directly onto stage via
+wave technology using headphones attached to them..and then afterward everyone gets together
+again once more!! This could also mean anything really though since most musicians do not even
+realize themselves performing outside of reality anymore anyway....but whatever works best for
+YOU!!!
+13
+
+===== PAGE 14 =====
+
+Programming and Logic Building:
+Human: Generate a Python code snippet that implements a function to calculate the Fibonacci
+sequence using recursion. Bonus points if you can make it more efficient using memoization.
+MobiLlama-1.2B:
+Sure, here’s a Python code snippet that implements a function to calculate the Fibonacci sequence
+using recursion:
+“‘
+def fibonacci(n):
+if n <= 1:
+return n
+else:
+return fibonacci(n-1) + fibonacci(n-2)
+To make this function more efficient using memoization, we can store the previous values of the
+Fibonacci sequence in a dictionary. Here’s an updated version of the function that uses memoization:
+def fibonacci(n, memo={}):
+if n in memo:
+return memo[n]
+elif n <= 1:
+return n
+else:
+memo[n] = fibonacci(n-1, memo) + fibonacci(n-2, memo)
+return memo[n]
+This function takes a number n as input and returns the nth Fibonacci number, or the value n if it’s
+already been calculated. If n is less than or equal to 1, the function returns the value n. Otherwise,
+it recursively calls itself with the previous two numbers in the sequence and adds them together. If
+the value of n is already in the dictionary, the function returns the value of n directly. Otherwise, it
+adds the value of n to the dictionary and returns the value of n with the memoized value.
+This updated function is more efficient because it avoids calculating the same value multiple times,
+which can be a bottleneck in recursive functions.
+Innovative Thinking:
+Human: Construct a sentence that uses every letter of the alphabet at least once.
+MobiLlama-1.2B:
+I am just a 10-year-old’s birthday party planner. I love organizing and planning fun and memorable
+events for kids. I am always up for a challenge and love to create unique and exciting experiences
+for my clients.
+14
+
+===== PAGE 15 =====
+
+Creativity and Imagination:
+Human: Write a role-play with a tourist and a travel guide for a finctional planet.
+MobiLlama-1.2B:
+Sure, here’s a role-play:
+### Tourist: Hi, I’m a tourist from Earth. I’m here to explore the finctional planet. Can you tell me
+more about it?
+### Travel Guide: Sure, the finctional planet is a unique and fascinating place. It’s a world where
+science and magic collide, where the laws of physics are different from our own.
+### Tourist: That sounds amazing! Can you tell me more about the planet’s history and culture?
+### Travel Guide: Sure, the planet was created by a group of scientists who wanted to explore the
+limits of human knowledge. They created a simulation to test their theories, and the simulation
+went wrong. The simulation created a world where science and magic intertwined, and the planet
+became a place where people could live and work together.
+### Tourist: That sounds amazing! Can you tell me more about the planet’s technology and
+infrastructure?
+### Travel Guide: Sure, the planet has advanced technology that allows people to travel through
+time and space. It also has a network of underground tunnels that connect different parts of the
+planet.
+### Tourist: That sounds amazing! Can you tell me more about the planet’s natural resources and
+resources?
+### Travel Guide: Sure, the planet has a vast array of natural resources that are essential for the
+planet’s survival. It has a unique ecosystem that is home to a variety of species, and it has a thriving
+economy that relies on the planet’s resources.
+### Tourist: That sounds amazing! Can you tell me more about the planet’s history and culture?
+### Travel Guide: Sure, the planet has a rich history that dates back to the beginning of time. It has
+a complex society that is based on a balance between science and magic.
+### Tourist: That sounds amazing! Can you tell me more about the planet’s future?
+### Travel Guide: Sure, the planet is in the process of creating a new civilization that will be based
+on a fusion of science and magic. It will be a place where people can live and work together, and it
+will be a place where science and magic will be in harmony.
+### Tourist: That sounds amazing! Can you tell me more about the planet’s future?
+### Travel Guide: Sure, the planet is in the process of creating a new civilization that will be based
+on a fusion of science and magic. It will be a place where people can live and work together, and it
+will be a place where science and magic will be in harmony.
+15

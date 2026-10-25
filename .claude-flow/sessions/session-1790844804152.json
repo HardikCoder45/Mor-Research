@@ -1,0 +1,14 @@
+{
+  "id": "session-1790844804152",
+  "startedAt": "2026-10-01T08:53:24.152Z",
+  "cwd": "/Users/hardikarora/Desktop/MAIN/research",
+  "context": {},
+  "metrics": {
+    "edits": 2,
+    "commands": 0,
+    "tasks": 0,
+    "errors": 0
+  },
+  "endedAt": "2026-10-01T16:10:03.066Z",
+  "duration": 26198914
+}

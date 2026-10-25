@@ -1,0 +1,24 @@
+{
+  "checkpoint_name": "checkpoint_step_015260_tokens_0500.04M",
+  "data_cursor": 501016320,
+  "files": {
+    "config.json": {
+      "bytes": 377,
+      "sha256": "63d782f84d60830dd754de9a65bce8527becff878662e6d30e66419690658f23"
+    },
+    "metrics.json": {
+      "bytes": 304,
+      "sha256": "ce56d3ac2c5d7a05cc0792a91f31b5a435155548204dbabd5d67c2f050169c60"
+    },
+    "model.safetensors": {
+      "bytes": 19937448,
+      "sha256": "48e704fb5acf21fd13c0c8004d465e812618e9febe610237f4facf4ad35d825c"
+    },
+    "training_state.pt": {
+      "bytes": 39943007,
+      "sha256": "3c24b6c947d1a85e4a5505af6a8390fb78d8fe90290d20ef4ea11a72ab5a2dcf"
+    }
+  },
+  "step": 15260,
+  "tokens_seen": 500039680
+}

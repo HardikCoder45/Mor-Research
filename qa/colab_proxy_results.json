@@ -1,0 +1,107 @@
+{
+  "batch": 16,
+  "dataset": "Tiny Shakespeare char-level",
+  "device": "cuda",
+  "gpu": "Tesla T4",
+  "interpretation_warning": "Proxy-scale short character training validates trainability/relative structural overhead only; it is not evidence that the same ordering holds at 480-497M after trillion-token pretraining.",
+  "proxy_rank_by_prefill_latency": [
+    "flash_skip",
+    "cla_cache",
+    "local_global",
+    "dense_deep",
+    "edge_rec"
+  ],
+  "proxy_rank_by_val_loss": [
+    "local_global",
+    "edge_rec",
+    "flash_skip",
+    "dense_deep",
+    "cla_cache"
+  ],
+  "results": [
+    {
+      "end_val_loss": 2.347144603729248,
+      "last_train_ce": 2.3510801792144775,
+      "meta": {
+        "recursive_tokens": 1024,
+        "route_fraction": 0.5
+      },
+      "name": "edge_rec",
+      "peak_cuda_alloc_MiB": 277.47265625,
+      "prefill_256_ms_median": 14.666617500097345,
+      "prefill_256_ms_p95": 19.800569250105582,
+      "proxy_params": 1807585,
+      "router_aux": 0.6358569264411926,
+      "start_val_loss": 138.23058319091797,
+      "train_step_ms_median": 46.88576700004887,
+      "val_loss_drop": 135.88343858718872
+    },
+    {
+      "end_val_loss": 2.483794462680817,
+      "last_train_ce": 2.4891598224639893,
+      "meta": {},
+      "name": "dense_deep",
+      "peak_cuda_alloc_MiB": 270.21533203125,
+      "prefill_256_ms_median": 14.584206499989705,
+      "prefill_256_ms_p95": 19.968986100025177,
+      "proxy_params": 1707072,
+      "router_aux": 0.0,
+      "start_val_loss": 107.7861385345459,
+      "train_step_ms_median": 47.014365999984875,
+      "val_loss_drop": 105.30234407186508
+    },
+    {
+      "end_val_loss": 2.432437980175018,
+      "last_train_ce": 2.4818763732910156,
+      "meta": {
+        "attention_layers": 3
+      },
+      "name": "flash_skip",
+      "peak_cuda_alloc_MiB": 216.64111328125,
+      "prefill_256_ms_median": 5.8476234999034205,
+      "prefill_256_ms_p95": 6.280055850015742,
+      "proxy_params": 2041728,
+      "router_aux": 0.0,
+      "start_val_loss": 175.0248176574707,
+      "train_step_ms_median": 18.774513000039406,
+      "val_loss_drop": 172.59237967729567
+    },
+    {
+      "end_val_loss": 2.5091282606124876,
+      "last_train_ce": 2.4224627017974854,
+      "meta": {
+        "kv_producers": 4
+      },
+      "name": "cla_cache",
+      "peak_cuda_alloc_MiB": 246.15966796875,
+      "prefill_256_ms_median": 9.791280000058578,
+      "prefill_256_ms_p95": 11.803568599793834,
+      "proxy_params": 1756512,
+      "router_aux": 0.0,
+      "start_val_loss": 139.1984848022461,
+      "train_step_ms_median": 35.95305700002882,
+      "val_loss_drop": 136.6893565416336
+    },
+    {
+      "end_val_loss": 2.340876519680023,
+      "last_train_ce": 2.353423833847046,
+      "meta": {
+        "local_layers": 5,
+        "window": 64
+      },
+      "name": "local_global",
+      "peak_cuda_alloc_MiB": 234.26220703125,
+      "prefill_256_ms_median": 11.023571000123411,
+      "prefill_256_ms_p95": 17.144067899903348,
+      "proxy_params": 1763904,
+      "router_aux": 0.0,
+      "start_val_loss": 142.85242156982423,
+      "train_step_ms_median": 33.5483019999856,
+      "val_loss_drop": 140.5115450501442
+    }
+  ],
+  "seed": 20260830,
+  "seq_len": 128,
+  "steps": 150,
+  "torch": "2.11.0+cu128"
+}

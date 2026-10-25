@@ -1,0 +1,33 @@
+# Downloaded research papers
+papers/
+
+# Python environments and caches
+.venv/
+.venv-*/
+**/.venv/
+**/.venv-*/
+__pycache__/
+*.py[cod]
+
+# Large model and training artifacts
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.bin
+
+# Generated training downloads, checkpoints, and runtime state
+**/checkpoints/
+**/downloads/
+**/recovered_*/
+**/resume_*/
+**/kernel_output/
+**/kaggle_output*/
+**/run/logs/
+**/run/control.json
+**/run/telemetry_status.json
+
+# Common local artifacts
+.DS_Store
+*.log

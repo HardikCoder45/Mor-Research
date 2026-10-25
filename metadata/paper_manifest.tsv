@@ -1,0 +1,65 @@
+arxiv_id	title	year	topic	priority	relevance
+2602.09080	Looping Back to Move Forward: Recursive Transformers for Efficient and Flexible Large Multimodal Models	2026	recursion	seed	Recursive connector + monotonic anytime recursion objective
+2507.10524	Mixture-of-Recursions: Learning Dynamic Recursive Depths for Adaptive Token-Level Computation	2025	recursion	seed	Adaptive token recursion + middle sharing + recursion-aware KV cache; includes 135M/360M evidence
+2402.14905	MobileLLM: Optimizing Sub-billion Parameter Language Models for On-Device Use Cases	2024	small-architecture	core	Direct 125M/350M architecture study; deep-thin, tied embeddings, GQA, block sharing
+2404.14619	OpenELM: An Efficient Language Model Family with Open-source Training and Inference Framework	2024	small-architecture	core	270M family member; layer-wise width/FFN scaling and open recipe
+2402.16840	MobiLlama: Towards Accurate and Lightweight Fully Transparent GPT	2024	small-architecture	core	0.5B edge-oriented shared-FFN language model with Android deployment
+2502.02737	SmolLM2: When Smol Goes Big -- Data-Centric Training of a Small Language Model	2025	training-data	core	Small-model multi-stage/data-quality recipe; 135M/360M family context
+2412.15115	Qwen2.5 Technical Report	2024	small-model-reference	core	Strong 0.5B dense reference architecture/training family
+2503.19786	Gemma 3 Technical Report	2025	small-model-reference	core	Efficient attention/local-global design and distillation family; informs 270M variant
+2511.23404	LFM2 Technical Report	2025	hybrid-ondevice	core	350M on-device hybrid architecture with hardware-in-loop search and distillation
+2511.06719	MobileLLM-Pro Technical Report	2025	ondevice-training	core	Long-context distillation, specialist merging, QAT/self-distillation; 1B teacher/reference
+2509.24945	MobileLLM-R1: Exploring the Limits of Sub-Billion Language Model Reasoners with Open Training Recipes	2025	reasoning-training	core	Sub-billion reasoning recipe and high-quality-data resampling
+2401.02385	TinyLlama: An Open-Source Small Language Model	2024	training-reference	supporting	Overtraining and efficient open small-LM pretraining reference
+2410.20672	Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA	2024	recursion	core	Recursive conversion, depth-specific LoRA, distillation, continuous depth-wise batching
+1807.03819	Universal Transformers	2018	recursion-foundation	core	Foundational recurrent depth/parameter sharing with dynamic halting
+1909.11942	ALBERT: A Lite BERT for Self-supervised Learning of Language Representations	2019	parameter-sharing	core	Cross-layer parameter sharing + embedding factorization foundation
+2104.06022	Lessons on Parameter Sharing across Layers in Transformers	2021	parameter-sharing	core	Cycle/sequence sharing strategies directly inherited by modern recursive LMs
+2310.07096	Sparse Universal Transformer	2023	adaptive-depth	core	Shared parameters + sparse experts + dynamic halting
+2404.02258	Mixture-of-Depths: Dynamically allocating compute in transformer-based language models	2024	adaptive-depth	core	Static-budget top-k token compute routing
+2502.05171	Scaling up Test-Time Compute with Latent Reasoning: A Recurrent Depth Approach	2025	latent-recursion	core	Recurrent block test-time depth scaling and latent reasoning
+2502.17416	Reasoning with Latent Thoughts: On the Power of Looped Transformers	2025	latent-recursion	core	Evidence/theory that reasoning depth can be looped without proportional parameters
+2301.13196	Looped Transformers as Programmable Computers	2023	looped-theory	supporting	Computational expressivity of looped shallow Transformers
+2310.02226	Think before you speak: Training Language Models With Pause Tokens	2023	test-time-compute	supporting	Extra internal compute before decoding; baseline for latent compute
+2512.12880	Improving Recursive Transformers with Mixture of LoRAs	2025	recursion	core	Conditional low-rank specialization restores expressivity under sharing; compact 50M-120M evidence
+1911.02150	Fast Transformer Decoding: One Write-Head is All You Need	2019	attention-kv	core	Multi-query attention foundation for KV memory/bandwidth reduction
+2305.13245	GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints	2023	attention-kv	core	Grouped-query attention quality/efficiency tradeoff
+2405.12981	Reducing Transformer Key-Value Cache Size with Cross-Layer Attention	2024	attention-kv	core	Shares KV across adjacent layers for another ~2x cache reduction beyond MQA
+2405.05254	You Only Cache Once: Decoder-Decoder Architectures for Language Models	2024	attention-kv	core	Architectural cache-once design and prefill early exit
+2403.09636	Dynamic Memory Compression: Retrofitting LLMs for Accelerated Inference	2024	kv-compression	core	Learned online KV compression; combines with GQA
+2401.18079	KVQuant: Towards 10 Million Context Length LLM Inference with KV Cache Quantization	2024	kv-quantization	core	3-bit KV quantization with key/value-aware methods
+2402.02750	KIVI: A Tuning-Free Asymmetric 2bit Quantization for KV Cache	2024	kv-quantization	core	2-bit asymmetric KV quantization; per-channel keys/per-token values
+2403.05527	GEAR: An Efficient KV Cache Compression Recipe for Near-Lossless Generative Inference of LLM	2024	kv-compression	supporting	Quantization + low-rank + sparse residual recovery
+2404.14469	SnapKV: LLM Knows What You are Looking for Before Generation	2024	kv-pruning	core	Training-free head-specific cache selection for long prompts
+2405.14366	MiniCache: KV Cache Compression in Depth Dimension for Large Language Models	2024	kv-compression	core	Cross-layer/depth cache merging; directly relevant to tied recursion
+2510.00636	Expected Attention: KV Cache Compression by Estimating Attention from Future Queries Distribution	2025	kv-pruning	supporting	FlashAttention-compatible future-query cache importance estimation
+2210.17323	GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers	2022	weight-quantization	core	Canonical low-bit PTQ baseline
+2306.00978	AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration	2023	weight-quantization	core	Hardware-friendly W4 PTQ with edge/mobile implementation evidence
+2211.10438	SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models	2022	quantization	core	W8A8 activation smoothing baseline
+2401.06118	AQLM: Extreme Compression of Large Language Models via Additive Quantization	2024	weight-quantization	supporting	Extreme vector/additive low-bit compression
+2404.00456	QuaRot: Outlier-Free 4-Bit Inference in Rotated LLMs	2024	quantization	core	End-to-end W4A4KV4 via rotations
+2405.16406	SpinQuant: LLM quantization with learned rotations	2024	quantization	core	Learned rotations improve W4A4KV4 accuracy
+2402.04396	QuIP#: Even Better LLM Quantization with Hadamard Incoherence and Lattice Codebooks	2024	weight-quantization	supporting	High-quality extreme weight-only vector quantization
+2402.17764	The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits	2024	quantization-aware-architecture	supporting	Ternary-from-scratch alternative with potentially radical device efficiency
+2312.11514	LLM in a flash: Efficient Large Language Model Inference with Limited Memory	2023	ondevice-systems	core	Memory-bandwidth/flash-aware deployment on constrained devices
+2001.08361	Scaling Laws for Neural Language Models	2020	scaling-laws	core	Foundational parameter/data/compute scaling reference
+2203.15556	Training Compute-Optimal Large Language Models	2022	scaling-laws	core	Compute-optimal data/model tradeoff; must reinterpret for overtrained deployable students
+2306.11644	Textbooks Are All You Need	2023	data-quality	core	350M phi-1-small evidence for high-quality synthetic/textbook-style data
+2305.07759	TinyStories: How Small Can Language Models Be and Still Speak Coherent English?	2023	data-quality	supporting	Controlled high-quality synthetic data for very small LMs
+2406.11794	DataComp-LM: In search of the next generation of training sets for language models	2024	data-quality	core	Controlled data filtering/mixing experiments including 412M scale
+2406.17557	The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale	2024	data-quality	core	FineWeb-Edu filtering strongly relevant to small-model knowledge/reasoning
+2306.08543	MiniLLM: On-Policy Distillation of Large Language Models	2023	distillation	core	Generative on-policy reverse-KL distillation down to 120M students
+2402.03898	DistiLLM: Towards Streamlined Distillation for Large Language Models	2024	distillation	core	Efficient skew-KL + adaptive off-policy generative distillation
+2305.02301	Distilling Step-by-Step! Outperforming Larger Language Models with Less Training Data and Smaller Model Sizes	2023	distillation	core	Teacher rationales as auxiliary supervision
+2502.12143	Small Models Struggle to Learn from Strong Reasoners	2025	reasoning-distillation	core	Learnability gap; short/mixed CoT can beat stronger/longer teacher traces for small students
+2412.06769	Training Large Language Models to Reason in a Continuous Latent Space	2024	latent-reasoning	core	Coconut continuous hidden-state recurrence; key comparator to recursive compute
+2502.21074	CODI: Compressing Chain-of-Thought into Continuous Space via Self-Distillation	2025	latent-reasoning	core	Self-distilled implicit CoT and compressed latent reasoning
+2502.08524	LLM Pretraining with Continuous Concepts	2025	latent-concepts	supporting	CoCoMix continuous concept prediction/interleaving improves sample efficiency
+2312.00752	Mamba: Linear-Time Sequence Modeling with Selective State Spaces	2023	hybrid-alternative	core	Primary non-attention sequence-model alternative for device efficiency comparison
+2405.21060	Transformers are SSMs: Generalized Models and Efficient Algorithms Through Structured State Space Duality	2024	hybrid-alternative	supporting	Mamba-2 / state-space duality and efficient sequence modeling
+2402.19427	Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models	2024	hybrid-alternative	core	Hybrid recurrent + local attention architecture relevant to on-device inference
+2404.07839	RecurrentGemma: Moving Past Transformers for Efficient Open Language Models	2024	hybrid-alternative	core	Open Griffin-based efficient model family and deployment reference
+2302.10866	Hyena Hierarchy: Towards Larger Convolutional Language Models	2023	hybrid-alternative	supporting	Long-convolution alternative to attention
+2411.13676	Hymba: A Hybrid-head Architecture for Small Language Models	2024	hybrid-alternative	core	Hybrid attention/SSM heads targeted at compact language models
+2603.15954	MobileLLM-Flash: Latency-Guided On-Device LLM Design for Industry Scale Deployment	2026	ondevice-architecture	core	Hardware-in-loop mobile CPU search; shallow-wide and interleaved skip-attention; direct 350M device evidence
+2608.01034	Opt.Gear Technical Report	2026	hybrid-ondevice	core	270M NPU-oriented local/global + ConvKV mixer; direct edge/cache and data-efficiency evidence

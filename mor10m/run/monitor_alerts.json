@@ -1,0 +1,9 @@
+{
+  "disk_space": {
+    "notified_at": 1792516571.38308,
+    "free_bytes": 744529920,
+    "message": "User asked to free at least 2 GiB; transfer guard threshold is 768 MiB. Kaggle continuation remains queued.",
+    "resolved_at": 1792519259.7053928,
+    "free_bytes_now": 3207413760
+  }
+}

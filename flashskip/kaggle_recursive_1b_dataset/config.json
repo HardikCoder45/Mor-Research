@@ -1,0 +1,28 @@
+{
+  "architecture_version": "10m-rec-middle-cycle-nr2-v1-2026-09-03",
+  "attention_layers": [
+    0,
+    1,
+    3,
+    5,
+    7,
+    9
+  ],
+  "d_ff": 360,
+  "d_model": 160,
+  "head_dim": 32,
+  "max_seq_len": 8192,
+  "model_name": "FlashSkip-10M-Recursive-MiddleCycle-Nr2",
+  "n_kv_heads": 1,
+  "n_layers": 10,
+  "n_q_heads": 5,
+  "paper_reference": "arXiv:2507.10524",
+  "recursion_steps": 2,
+  "recursion_strategy": "middle-cycle",
+  "rms_eps": 1e-06,
+  "rope_theta": 1000000.0,
+  "shared_end_layer": 9,
+  "shared_start_layer": 1,
+  "tie_embeddings": true,
+  "vocab_size": 49152
+}

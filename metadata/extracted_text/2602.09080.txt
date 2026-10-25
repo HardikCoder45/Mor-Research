@@ -1,0 +1,1079 @@
+
+
+===== PAGE 1 =====
+
+Looping Back to Move Forward: Recursive Transformers for Efficient and
+Flexible Large Multimodal Models
+Ruihan Xu1, Yuting Gao2, Lan Wang2, Jianing Li2, Weihao Chen2, Qingpei Guo2,
+Ming Yang2, Shiliang Zhang†1
+1 State Key Laboratory of Multimedia Information Processing,
+School of Computer Science, Peking University 2AntGroup
+Abstract
+Large Multimodal Models (LMMs) have achieved re-
+markable success in vision–language tasks, yet their vast
+parameter counts are often underutilized during both train-
+ing and inference. In this work, we embrace the idea of
+looping back to move forward: reusing model parame-
+ters through recursive refinement to extract stronger mul-
+timodal representations without increasing model size. We
+propose RecursiveVLM, a recursive Transformer architec-
+ture tailored for LMMs. Two key innovations enable effec-
+tive looping: i) a Recursive Connector that aligns features
+across recursion steps by fusing intermediate-layer hidden
+states and applying modality-specific projections, respect-
+ing the distinct statistical structures of vision and language
+tokens; ii) a Monotonic Recursion Loss that supervises ev-
+ery step and guarantees performance improves monotoni-
+cally with recursion depth. This design transforms recur-
+sion into an on-demand refinement mechanism: delivering
+strong results with few loops on resource-constrained de-
+vices and progressively improving outputs when more com-
+putation resources are available. Experiments show con-
+sistent gains of +3% over standard Transformers and +7%
+over vanilla recursive baselines, demonstrating that strate-
+gic looping is a powerful path toward efficient, deployment-
+adaptive LMMs.
+1. Introduction
+Large Multimodal Models (LMMs), such as GPT-4V [30],
+Gemini [9, 33, 34], and Qwen-VL [5, 6, 36], have achieved
+remarkable performance on vision–language tasks like vi-
+sual question answering and image captioning [2, 18, 37].
+Yet this success relies on massive parameter counts that
+are typically engaged only once during inference, leaving
+much of their representational capacity underutilized. Re-
+cent work in language modeling demonstrates that reusing
+the same parameters across multiple iterative passes can
+0 4 8 12 16 20 24 28
+Layer Index
+0
+200
+400
+600L2 norm
+(a) L2 norm of hidden states
+Visual Token
+Text Token
+0 4 8 12 16 20 24 28
+Layer Index
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0CKA Score
+(b) Centered Kernel Alignment (CKA)
+Visual Token
+Text Token
+Figure 1. Statistical results in Ming-Lite-Omni [1]. (a) The L2
+norm of the hidden states in each layer indicates misalignment in
+feature scale. (b) The Centered Kernel Alignment (CKA) between
+the hidden states and the input embeddings indicates a feature dis-
+tribution misalignment in vanilla recursive models.
+significantly enhance reasoning and representation quality
+without increasing model size [3, 4, 27, 31, 44]. Recur-
+sive Transformers, theoretically capable of simulating pro-
+grammable computation [15], have already advanced the
+state of the art in Large Language Models (LLMs). These
+findings suggest that recursive refinement offers a promis-
+ing path toward more efficient LMMs—looping back over
+existing weights to move multimodal understanding for-
+ward.
+However, extending recursion from unimodal LLMs to
+multimodal LMMs is far from straightforward. Unlike ho-
+1
+arXiv:2602.09080v1  [cs.LG]  9 Feb 2026
+
+===== PAGE 2 =====
+
+mogeneous text sequences, LMMs process heterogeneous
+vision and language tokens whose representations evolve
+along divergent trajectories across layers (see Figure 1).
+This intrinsic modality gap introduces unique alignment and
+stability challenges that invalidate naive recursive designs
+developed for LLMs.
+The first challenge issevere feature misalignment be-
+tween recursion steps. A vanilla recursive model feeds the
+output of one step directly as input to the next (see Fig-
+ure 2(b)), but hidden states in LMMs diverge significantly in
+both scale and distribution across layers. As shown in Fig-
+ure 1(a), the L2 norm of hidden states grows rapidly with
+depth, causing scale mismatch that leads to numerical in-
+stability when deep features are reused as shallow inputs.
+Figure 1(b) further reveals low Centered Kernel Alignment
+(CKA) [20] between deep-layer features and input embed-
+dings, indicating semantic distribution drift. Compounding
+this, vision and language tokens exhibit inherently differ-
+ent statistical patterns, making a unified alignment strategy
+ineffective.
+The second challenge lies in thelack of flexible, step-
+wise predictability. Most existing recursive models are
+designed to produce a final output only at a pre-specified
+recursion depth. While recent works introduce token-level
+dynamic gating [44] or routing mechanisms [4] to adjust
+computation per token, they still optimize for a single tar-
+get depth and do not ensure consistent quality across in-
+termediate steps. Consequently, early or truncated recur-
+sions often yield suboptimal or even degraded predictions,
+making them unreliable under variable latency or energy
+constraints. In real-world deployment, however, a model
+must support on-demand inference: delivering usable re-
+sults after just one or two steps on edge devices, while
+progressively refining outputs in cloud environments. This
+demands not only valid predictions at every step, but also
+monotonic performance improvement with recursion depth,
+a property absent in current approaches and essential for
+trustworthy adaptation.
+To address these challenges, we propose RecursiveVLM,
+the first recursive Transformer architecture tailored for
+LMMs. As illustrated in Figure 2, standard LMMs (left)
+perform a single forward pass and vanilla recursive models
+(middle) naively feed hidden states back as inputs, suffering
+from severe misalignment. Differently, our design (right)
+introduces a dedicated Recursive Connector to bridge re-
+cursion steps. This connector resolves cross-step misalign-
+ment by (i) normalizing feature scales via RMSNorm, (ii)
+mapping deep representations back to the input embedding
+space through a residual MLP trained with continual learn-
+ing, and (iii) employing modality-specific projections for
+visual and textual tokens. It further enriches inputs by fus-
+ing features from multiple intermediate layers. Comple-
+menting this architectural innovation, we introduce a Mono-
+tonic Recursion Loss that supervises every recursive step
+and explicitly enforces non-decreasing performance with
+depth, enabling valid predictions at any computational bud-
+get. Together, they transform recursion into a deployment-
+adaptive refinement mechanism, unlocking stronger perfor-
+mance from the same parameters while supporting dynamic
+resource constraints.
+Experiments across 8 standard vision–language bench-
+marks show that RecursiveVLM, trained with recursive re-
+finement, outperforms the standard non-recursive baseline
+by 1-2% even when using only a single recursion step at
+inference, demonstrating that our architecture learns more
+effective representations through recursive training alone.
+At the second recursion step, performance improves by
++3% compared with the non-recursive baseline, confirming
+monotonic gains and validating our design for deployment-
+adaptive inference. To the best of our knowledge, this is an
+original attempt on a recursive Transformer architecture for
+LMMs. Its success may inspire further efforts on compact
+LMMs through recursively using parameters.
+2. Related Works
+2.1. Large Multimodal Models
+Mainstream LMMs [5, 6, 9, 30, 33, 34, 36] have achieved
+great success in vision-language modeling. A typical LMM
+architecture consists of three parts: a vision encoder for ex-
+tracting image features, a large language model serving as
+the cognitive core, and an adapter module for connecting
+the vision and language modalities [23, 24, 43]. Recent
+advances have conducted in-depth exploration in architec-
+ture design, such as DeepStack adapter [29] and modality-
+independent routers [1]. Despite these advances, exist-
+ing LMMs universally adopt a single forward-propagate
+paradigm, where each parameter is activated only once per
+input. To date, there has been no systematic exploration
+of recursive architectures for LMMs, despite their potential
+to significantly improve parameter utilization and general-
+ization in multimodal settings. This paper addresses this
+gap by introducing recursive computation into mainstream
+LMMs, aiming to enhance both efficiency and adaptability
+without increasing model size.
+2.2. Recursive Transformers
+Recursive architectures have been introduced to enhance
+both parameter efficiency and reasoning capabilities in
+modern Large Language Models (LLMs). They can be
+interpreted through two complementary lenses: parameter
+sharing and latent reasoning.
+Parameter sharing.From this perspective, recursive mod-
+els reuse one or more Transformer blocks across depth,
+effectively sharing weights to reduce model size with-
+out increasing computational cost. Early work, such as
+2
+
+===== PAGE 3 =====
+
+Text/VisualConnector
+Layer L/4Layer2L/4Layer3L/4Loop ×𝑹
+Layer L/4Layer2L/4Layer3L/4Loop ×𝑹
+Layer L/4Layer2L/4Layer3L/4
+(a) Standard Transformer(b) Vanilla Recursive Transformer(c) RecursiveVLM (Ours)
+Figure 2. Comparison of recursive architectures for LMMs. (a) Standard non-recursive LMM with single-pass. (b) Vanilla recursion:
+output embeddings are directly fed back as inputs across steps, causing feature scale and distribution misalignment. (c) Our method fuses
+features from multiple layers and employs a modality-specific Recursive Connector to bridge recursion steps and mitigate misalignment.
+ALBERT [21] and MobileLLM [27], reuses the parame-
+ters in the BERT architecture, while the Universal Trans-
+former [10, 11] shows that a single recurrent block can
+match the representational capacity of deep non-shared
+models. Subsequent studies further explore structured shar-
+ing strategies: Takase and Kiyono [32] systematically ana-
+lyzes trade-offs in compression, and Megrez2 [22] reuses
+MoE experts across layers. However, strict weight ty-
+ing often leads to representation degradation in large-scale
+settings. To mitigate this, Relaxed Recursive Transform-
+ers [3] introduce lightweight LoRA adapters at each recur-
+sion step, while Mixture of Recursions (MoR) [4] enables
+input-adaptive recursion depth by dynamically allocating
+computation where most beneficial.
+Latent reasoning.Alternatively, recursion can be viewed
+as iterative refinement of internal representations—a form
+of latent reasoning [8, 14, 31, 41]. Looped Transform-
+ers exemplify this paradigm: they can simulate pro-
+grammable computation [15], learn iterative optimization
+algorithms [13], generalize to longer sequences on algorith-
+mic tasks [12], and model data-fitting dynamics [38]. Re-
+cent work further validates their scaling potential: Geiping
+et al. [14] leverages recurrence to scale test-time compu-
+tation in latent space, and Saunshi et al. [31] shows that
+looped models can match much deeper non-recursive coun-
+terparts on complex reasoning benchmarks
+While these advances highlight the promise of recursive
+Transformers in LLMs, they largely overlook the unique
+challenges posed by multimodal settings, particularly se-
+vere cross-step feature misalignment and the need for flex-
+ible, step-wise predictability. Our work bridges this gap
+by introducing theRecursive ConnectorandMonotonic
+Recursion Loss, enabling stable and adaptive recursion in
+LMMs for the first time.
+3. Method
+In this section, we present our approach for recasting a
+vanilla large multi-modal model into a recursive model.
+We begin with a concise overview of the standard vision-
+language model framework. Next, we elaborate on the key
+modifications required to endow the model with recursive
+processing capabilities.
+3.1. Preliminary
+We start by formalizing a general Vision-Language Model
+(VLM) architecture. Given a multimodal input comprising
+an image and associated text, the vision encoder maps the
+visual input to a sequence of visual token embeddings, de-
+noted asV, and the textual input is encoded into language
+token embeddingsT. These two embedding sequences are
+then concatenated to form the model’s initial input rep-
+resentation:E= [V,T]. Prevailing VLMs commonly
+adopt the Transformer decoder architecture. LetH ℓ de-
+note the hidden state output by theℓ-th decode layer, where
+ℓ= 1,2,· · ·, L, andLis the total number of layers in the
+decoder. The transformation at each layer is given by:
+H ℓ =F(H ℓ−1;θ ℓ),(1)
+whereFdenotes the layer-wise transformation, andθ ℓ rep-
+resents the trainable parameters associated with theℓ-th
+layer. The initial hidden state is set to the input embeddings,
+i.e.H 0 =E. The final outputOis derived by decoding
+the hidden states from the deepest layerH L:
+O=G(H L;θ head),(2)
+whereGdenotes the final decoding function, andθ head rep-
+resents the parameters of the decoder head.
+3
+
+===== PAGE 4 =====
+
+(!"/$,&
+('"/$,&
+("/$,&
+(!"/$,(
+('"/$,(
+("/$,(Layer #/4
+Layer 2#/4
+Layer 3#/4
+TextConnectorVisual Connector
+Headℒ)
+Vision EncoderTextEmbedding
+Input Embedding
+Loop r=1
+Layer #/4
+Layer 2#/4
+Layer 3#/4
+ℒ'Head
+Input Embedding
+Loop r=2
+.())/()) /(').(')
+(a) RecursiveVLM
+Residualscaling
+Linear -,
+Linear --
+RMSNorm
+sσ
+s
+Initializewith0Initializewith1Randominitialization
+σActivationFunction (b) Connector module
+Figure 3. The framework of our proposed method. (a) RecursiveVLM loops the LLM backbone with a modality-specific multi-layer
+connector. (b) Detailed structure of the connector module comprising an RMSNorm, a learnable residual scaling vector, and an MLP.
+3.2. Recursive Transformer
+In this paper, we propose a method that recasts the standard
+transformer architecture to a recursive one. Letrdenote the
+index of the recursion step, wherer= 1,2,· · ·, RandR
+is the maximum recursion depth. At ther-th recursion step,
+the model input is denoted asE (r), with the initial input
+given byE (1) =E. LetH (r)
+ℓ represent the hidden state of
+theℓ-th layer after ther-th recursion step. The layer-wise
+transformation is defined as:
+H (r)
+ℓ =F
+
+H (r)
+ℓ−1;θ ℓ
+
+,(3)
+where the transformer decoder shares the same set of pa-
+rametersθ ℓ across all recursion steps.
+The key challenge lies in constructing the next-step in-
+putE (r+1) from all hidden states of the last recursionn
+H (r)
+ℓ |ℓ∈ {1,2,· · ·, L}
+o
+such that iterative refinement is
+stable and effective. Naive recursive methods reuse deep-
+layer outputsE (r+1) =H (r)
+L , leading to severe feature
+misalignment as shown in Fig. 1. They also employ a
+fixed-depth recursion, which limits deployment flexibility.
+To address these issues, we introduce two synergistic com-
+ponents: (i) a Recursive Connector that aligns cross-step
+representations via multi-layer fusion and modality-aware
+projection, and (ii) a Monotonic Recursion Loss that en-
+forces consistent performance improvement across recur-
+sion depths.
+3.3. Recursive Connector
+Directly applyingE (r+1) =H (r)
+L suffers from severefea-
+ture distribution misalignment, as deep-layer representa-
+tions diverge significantly from input embeddings in both
+scale and semantics. As shown in Figure 1, the L2 norm
+and CKA in the LMM indicate severe feature misalignment
+between hidden states in different layers, thus resulting in
+performance degradation in the naive recursive architecture.
+A modality-specific Recursive Connector is thus pro-
+posed to aggregate multi-layer features and map them back
+to the input embedding space. Specifically, we uniformly
+samplekintermediate layers from the totalLlayers,i.e.
+at positionL/4,2L/4,3L/4andLfork= 4. For each
+selected layerℓ, we decompose its output into visual and
+textual components:
+H ℓ = [V ℓ,T ℓ],(4)
+whereV ℓ ∈R Nv×d andT ℓ ∈R Nt×d denote the hidden
+states ofN v visual tokens andN t textual tokens, respec-
+tively. We then apply separate connector modules to each
+modality, mapping the hidden states back to the input em-
+bedding space:
+Aℓ,v =Cℓ,v (V ℓ),(5)
+Aℓ,t =Cℓ,t (T ℓ),(6)
+where each connectorC ℓ,∗ (shown in Figure 3(b)) consists
+4
+
+===== PAGE 5 =====
+
+of an RMSNorm layer, a residual connection, and a Multi-
+Layer Perceptron (MLP). The computation is formulated as:
+˜V ℓ = RMSNorm (V ℓ),(7)
+˜T ℓ = RMSNorm (T ℓ),(8)
+Aℓ,v = ˜V ℓ ·s ℓ,v +σ
+
+˜V ℓW u
+ℓ,v
+
+W d
+ℓ,v,(9)
+Aℓ,t = ˜T ℓ ·s ℓ,t +σ
+
+˜T ℓW u
+ℓ,t
+
+W d
+ℓ,t,(10)
+whereRMSNorm(·)denotes Root Mean Square Normal-
+ization layer [42].W u
+ℓ andW d
+ℓ are the learnable weight
+matrices of the MLP’s up-projection and down-projection
+layers, respectively;σis a nonlinear activation function, and
+sℓ is a learnable residual scaling vector.
+The output of the connector for layerℓis denoted by
+Aℓ. For brevity, the recursion step index(r)is omitted in
+this formulation.RMSNormaddresses the misalignment
+in feature scale by normalizing the hidden states. The MLP
+is dedicated to resolving the misalignment in feature distri-
+bution by mapping the intermediate hidden states into the
+embedding space, and the residual connection is meant to
+stabilize training as in previous works [17].
+The input for the subsequent recursion step is con-
+structed in a modality-aware manner. Specifically, letS=
+{L/4,2L/4,3L/4, L}denote the selected layer indices.
+Visual and textual components are updated separately as:
+V (r+1) =V (1) +
+X
+ℓ∈S
+A(r)
+ℓ,v,(11)
+T (r+1)
+t =T (1) +
+X
+ℓ∈S
+A(r)
+ℓ,t .(12)
+The full input embedding is then formed by concatenation:
+E(r+1) =
+h
+V (r+1),T (r+1)
+i
+.(13)
+This design fuses semantic cues from multiple layers while
+preserving the original signal for each modality, enabling
+more effective parameter utilization across recursion steps.
+Initialization Strategy.To ensure training stability, we
+initialize the recursive model such that its first recursion
+step exactly reproduces the behavior of the original pre-
+trained LMM. This is achieved by zero-initializing all con-
+nector outputs: (i) the residual scaling vectorss ℓ,v ands ℓ,t
+are set to zero, and (ii) following the LoRA initialization
+scheme, the down-projection weightsW d
+ℓ,v andW d
+ℓ,t are
+also initialized to zero. As a result, at the onset of training,
+E(r+1) =E (1) for allr, guaranteeing that the recursive
+model reproduces the exact output of the original pretrained
+model before any adaptation occurs.
+3.4. Monotonic Recursion Loss
+To encourage high-quality predictions at every recursion
+step and avoid performance degradation with increasing re-
+cursion depth, we introduce the Monotonic Recursion Loss.
+First, for each recursion stepr∈ {1,· · ·, R}, we ap-
+ply the model’s language modeling head to the final-layer
+hidden statesH (r)
+L to obtain the prediction for the current
+step. We then calculate the standard cross-entropy loss be-
+tween this prediction and the ground-truth target, which
+is denoted asL (r)
+CE . Second, to enforce consistent perfor-
+mance increase across recursion steps, we impose a per-
+token monotonicity constraint. Specifically, we compare
+the cross-entropy losses of adjacent recursion steps on a
+token-by-token basis. For any tokeniat stepr >1, if
+its loss exceeds that of the previous step, which indicates
+a deterioration in prediction quality, we apply a penalty to
+its current loss. Formally, the adjusted per-token lossL r
+i is
+defined as follows:
+ˆL(r)
+i =
+(
+β· L r
+i ,ifL (r)
+i >L (r−1)
+i ,
+Lr
+i ,otherwise,
+(14)
+whereL (r−1)
+i denotes the loss for tokeniat the previous
+recursion step, andβ >1is a hyperparameter set asβ=
+1.5in our experiments.
+The total loss for ther-th recursion step is defined
+as the average of the adjusted per-token losses:L (r) =
+1
+N
+PN
+i=1 ˆL(r)
+i whereNdenotes the number of tokens. For
+the initial step (r= 1), we use the standard cross-entropy
+loss,i.e.,L (1)
+CE .
+The overall training objective is defined as the sum of the
+losses across all recursion steps:
+Ltotal =
+RX
+r=1
+L(r).(15)
+Eq. (15) supervises the training to produce accurate predic-
+tion at each recursion step. It also explicitly encourages the
+model to follow a recursive trajectory of monotonic perfor-
+mance enhancement, thereby enabling effective prediction
+at any intermediate or final recursive step.
+4. Experiments
+This section first introduces the experimental setup, includ-
+ing the benchmark model, datasets, and evaluation metrics.
+It then presents the main performance comparison against
+baseline methods. Finally, through a series of ablation stud-
+ies, we provide an in-depth analysis of the effectiveness of
+core components of our model, including multi-layer aggre-
+gation, layer selection strategy, modality independence, and
+monotonic recursion loss.
+5
+
+===== PAGE 6 =====
+
+Table 1. RecursiveVLM outperforms baselines under both general and CoT training datasets. This work is an early attempt on recursive
+Transformer for LMMs. We thus compare with vanilla recursive baselines as introduced in the LLM domain [31, 44]. The results show
+that our method significantly improves performance of standard transfer, thus makes recursive multimodal models practical.
+Train Eval OCR HallusionModel Steps Step AI2D MMStar MMVet MMMU MMB MathVista Bench Bench Avg.
+Trained on Data1: general purpose instruction dataset
+Standard Transformer 1 1 69.40 45.03 55.28 40.44 67.01 51.6076.2037.56 55.31
+Vanilla recursion [31, 44] 2 1 63.02 42.38 49.82 42.67 60.65 43.27 69.90 33.55 50.66
+2 2 62.53 41.47 51.2440.8959.36 42.10 69.00 34.61 50.15
+Vanilla recursion 2 1 63.67 41.70 51.01 40.22 63.06 46.43 70.50 36.54 51.64
+w/ RMSNorm 2 2 63.18 40.28 47.80 39.11 60.48 45.40 69.40 35.15 50.10
+2 1 72.57 51.24 59.82 38.78 73.97 53.83 74.70 36.41 57.46RecursiveVLM (Ours) 2 2 74.64 52.10 59.95 40.44 76.63 52.17 74.70 38.69 58.86
+Trained on Data2: reasoning-intensive dataset
+Standard Transformer 1 1 66.71 50.14 63.26 38.56 65.98 55.47 82.00 46.65 58.60
+2 1 68.78 52.16 64.04 40.00 68.56 54.83 82.90 44.90 59.52RecursiveVLM (Ours) 2 2 72.57 55.44 65.64 43.44 74.31 58.50 83.70 47.22 62.60
+4.1. Experimental Setup
+Implementation Details.All experiments start from the
+pretrained checkpoint of Ming-Lite-Omni [1], a large omni-
+modal foundation model with 28 Transformer layers. We
+first perform continued pretraining on a hybrid corpus of
+6 million multimodal samples and 3 million text-only ex-
+amples to preserve general language understanding. Then
+Supervised Fine-Tuning (SFT) is conducted separately on
+two distinct instruction datasets:
+•Data1: A general-purpose instruction set containing 9
+million multimodal question-answering pairs, augmented
+with 3 million text-only NLP instructions to maintain
+broad language capability.
+•Data2: A reasoning-intensive dataset comprising 8 mil-
+lion long Chain-of-Thought (CoT) examples, supple-
+mented with 2.6 million NLP instances to support com-
+plex multi-step inference.
+We useData1by default unless specified. For all methods,
+including the baseline and ablations, we use the same train-
+ing protocol to ensure the fair comparison. During SFT,
+we set the recursion depth toR= 2and apply the Mono-
+tonic Recursion Loss withβ= 1.5. Features are aggregated
+from layers[7,14,21,28], and models are optimized with
+the AdamW optimizer using standard hyperparameters.
+Evaluation Benchmarks.We selected 8 multimodal
+evaluation benchmarks to assess model performance, in-
+cluding AI2D [19](diagram understanding), MM-Star [7]
+(complex multimodal reasoning), MM-Vet [39] (compre-
+hensive multimodal capability), MMMU [40] (massive
+multi-discipline multimodal understanding), MMB [25]
+(multimodal understanding capability), MathVista [28]
+(mathematical reasoning in visual contexts), OCR-
+Bench [26] (OCR robustness), and HallusionBench [16]
+(multimodal hallucination). These datasets cover a wide
+range of capabilities from basic perception to complex rea-
+soning, allowing for a comprehensive evaluation of the
+model’s overall performance.
+4.2. Main Results
+To validate the effectiveness of our recursive architecture,
+we compare it against the standard Transformer [35] and
+vanilla recursive Transformers [12, 31, 44]. Results are
+shown in Table 1, where the baseline corresponds to our
+framework with recursion depthR= 1i.e., not applying
+recursion, trained under the same continued pretraining and
+SFT protocol. Vanilla recursive methods directly reuse the
+full output hidden states as input for the next recursion step,
+a common design in prior work [3, 12].
+As shown in Table 1, our non-recursive baseline consis-
+tently outperforms the vanilla recursive methods at both re-
+cursion steps withr= 1andr= 2. The poor performance
+of vanilla recursive methods can be attributed to the fea-
+ture misalignment and the lack of modality-aware feature
+processing, which hinder effective parameter reuse as dis-
+cussed in Section 1. A simple remedy, adding RMSNorm
+to normalize feature scales, fails to resolve these issues and
+yields negligible gains. In contrast, our RecursiveVLM
+achieves consistent improvements across all benchmarks
+and both recursion steps, demonstrating that carefully de-
+signed connectors and monotonic supervision enable stable
+and effective recursive computation.
+6
+
+===== PAGE 7 =====
+
+Table 2. Ablation on Recursive Connector components, highlight-
+ing the importance of the scaled residual connection with zero-
+initialized scaling.
+Model Eval Step AI2D MMStar MMVet MMB
+w/o connector 1 62.53 41.47 51.24 59.36
+RMSNorm 1 69.95 48.47 58.30 67.78
+2 70.79 48.91 58.62 67.87
+RMSNorm + MLP 1 70.73 48.81 57.89 70.10
+2 72.38 51.06 57.39 72.94
+RMSNorm + MLP 1 72.60 49.82 55.09 72.59
++ residual 2 73.22 49.99 57.29 73.28
+RMSNorm + MLP 1 72.57 51.24 59.82 73.97
++ scaled residual 2 74.64 52.10 59.95 76.63
+4.3. Ablation Studies
+4.3.1. The Component of Recursive Connector
+We evaluate the impact of connector components as shown
+in Table 2. The baseline (w/o connector) directly feeds
+deep-layer features back to the input, causing severe fea-
+ture misalignment and yielding the worst results. Incorpo-
+rating RMSNorm resolved the feature scale misalignment,
+while still face the challenge of distribution misalignment.
+Further incorporating an MLP to project features into the
+input embedding space yields additional gains on most met-
+rics, though minor fluctuations are observed on MMVet,
+perhaps due to task-specific sensitivity. Naively adding a
+standard residual connection (without learnable scaling) de-
+grades performance on MMStar and MMVet, suggesting
+that standard identity pathways do not enhance the opti-
+mization. In contrast, ourscaled residual connectionini-
+tializes the scaling vector to zero, which ensures the connec-
+tor output is zero at the start of training and thus preserves
+the original Transformer behavior. It provides a stable ini-
+tialization and allows the model to gradually learn the op-
+timal balance between the MLP and residual branches. As
+a result, the full Recursive Connector achieves the best per-
+formance across all benchmarks.
+Takeaway 1
+Vanilla recursive Transformers are faced with scale
+and distribution misalignment across recursions. Our
+Recursive Connector addresses these issues by nor-
+malizing the hidden states with RMSNorm and map-
+ping the hidden states into the input embedding space
+with an MLP and scaled residual connection, yielding
+an effective and stable performance improvement.
+Table 3. Ablation on the layer selection strategies.
+Selected layers AI2D MMStar MMVet MMB MathVista
+Non-recursive 69.40 45.03 55.28 67.01 51.60
+[28] 70.27 49.14 54.22 72.85 53.37
+[14,28] 72.18 48.35 56.61 70.53 52.77
+[1,2,3,4] 71.15 48.30 51.83 67.53 53.27
+[25,26,27,28] 72.51 50.12 55.68 71.91 51.43
+[7,14,21,28] 74.64 52.10 59.95 76.63 53.83
+4.3.2. The effectiveness of Multi-Layer Aggregation
+Existing recursive Transformer methods reuse only the fi-
+nal layer output as input for the subsequent recursion step.
+This design restricts the model’s ability to leverage rich in-
+termediate representations from earlier layers. To inves-
+tigate the impact of layer selection, we conduct an abla-
+tion study on different strategies, with results shown in Ta-
+ble 3. Using the last layer alone improves upon the non-
+recursive baseline, yet may not fully exploit the potential of
+recursive computation. When selecting two layers, we uni-
+formly sample the middle and final layers (e.g.,[L/2, L]).
+This yields moderate gains on some benchmarks but still
+underutilizes the full hierarchy of hidden states. For four-
+layer selection, we compare several strategies. Selecting the
+first four or last four consecutive layers provides an incom-
+plete view of feature evolution across the network, result-
+ing in marginal improvements. In contrast, our proposed
+uniform layer selection, sampling layers at regular inter-
+vals ([L/4,2L/4,3L/4, L]), achieves the best performance
+across all settings. This demonstrates that fusing features
+from diverse depths, which capture complementary levels
+of abstraction, is essential for effective recursive refinement.
+Takeaway 2
+Vanilla recursive Transformers employ the output
+of the last layer as the input of the next recursion,
+which constrains the capability of recursive models.
+Our Recursive Connector overcomes this bottleneck
+by aggregating multi-layer features from uniformly
+spaced depths, enabling richer recursive refinement.
+4.3.3. The effectiveness of Modality-Independency
+LMMs exhibit distinct feature distributions across vi-
+sion and language modalities. Processing each modal-
+ity with independent connector parameters allows for de-
+coupled, modality-specific adaptation, thereby enhancing
+the model’s representational capacity. As shown in Ta-
+ble 4, using a modality-independent connector consis-
+tently improves performance over a shared-parameter base-
+line across most benchmarks, validating the necessity of
+modality-aware recursive refinement.
+7
+
+===== PAGE 8 =====
+
+Table 4. Ablation on modality-shared vs. modality-independent
+connectors.
+Connector AI2D MMStar MMVetMMB MathVista
+Modality-shared 73.19 49.8060.1871.05 52.90
+Modality-independent 74.64 52.10 59.95 76.63 53.83
+Table 5. Ablation on training objectives for recursive models.
+Loss Eval
+Type Step AI2D MMStar MMVet MMB MathVista
+Loss at 1 68.85 42.99 54.54 62.71 49.00
+final step 2 72.02 46.82 56.56 69.07 50.50
+Loss at 1 70.73 47.31 54.13 67.44 51.53
+each step 2 72.57 49.71 59.73 70.19 53.67
+Monotonic 1 72.57 51.24 59.82 73.97 52.17
+loss 2 74.64 52.10 59.95 76.63 53.83
+Takeaway 3
+Vision and language tokens in LMMs follow distinct
+distributional patterns. Thus modality-independent
+connectors are essential for recursive adaptation.
+4.3.4. The effectiveness of Monotonic Recursion Loss
+Vanilla recursive models are usually equipped with aLoss
+at final step, which is restricted to predict only at a fixed,
+predefined recursion depth. This design cannot generate
+high-quality outputs atanyintermediate step, constraining
+the adaptive and efficient inference across diverse hardware.
+As shown in Table 5, this strategy yields suboptimal perfor-
+mance at the first recursion step (e.g., 68.85% on AI2D),
+as no direct signal guides early outputs. Applying cross-
+entropy loss at every recursion step (Loss at each step) im-
+provesr= 1performance across all benchmarks, confirm-
+ing the benefit of multi-step supervision. However, it does
+not enforce consistent quality progression, and performance
+may fluctuate between steps. In contrast, ourMonotonic
+Recursion Lossexplicitly penalizes degradation from one
+step to the next, resulting in the best scores at bothr= 1
+andr= 2. Notably, it achieves the highestr= 1perfor-
+mance, surpassing the per-step loss baseline, while further
+improving atr= 2. This demonstrates that monotonic su-
+pervision not only stabilizes training but also enables high-
+quality, anytime prediction.
+Takeaway 4
+Standard recursive training ignores intermediate
+steps. Our Monotonic Recursion Loss enables strong,
+reliable predictions atanyrecursion step.
+Table 6. Ablation on the number of recursion steps.
+Num Hallusion
+Recursion MMStar MMVet MMB MathVista Bench
+1 45.03 55.28 67.01 51.60 37.56
+2 52.10 59.95 76.6353.83 38.69
+3 51.07 55.1476.63 54.07 45.12
+4.3.5. The impact of Number of Recursions
+The number of recursion steps is a critical hyperparameter
+in recursive Transformers. Prior work has explored vary-
+ing depths: Bae et al. [3] adopts 2-step recursion, while
+Zhu et al. [44] reports optimal performance with 4 steps on
+smaller language models (1.4B–2.6B parameters). In con-
+trast, we study a large omni-modal model with 16B total
+parameters and 3B activated per forward pass, hence the
+optimal recursive step varies. As shown in Table 6, 2 recur-
+sion steps achieve the best overall performance on standard
+multimodal benchmarks (e.g., MMStar, MMB). Further in-
+creasing the depth to 3 steps yields marginal gains or even
+slight degradation on most general tasks, suggesting dimin-
+ishing returns beyondR= 2for these metrics.
+However, a striking trend emerges on the Hallusion-
+Bench: performance consistently improves with deeper re-
+cursion (37.56→38.69→45.12). This indicates that re-
+cursive refinement helps suppress hallucinatory outputs by
+iteratively correcting inconsistent or unsupported predic-
+tions. Notably, our training data and objectives are not tai-
+lored for hallucination mitigation; the observed improve-
+ment arises purely from the recursive architecture. This
+suggests that recursion inherently promotes more grounded
+and self-consistent reasoning, a property highly valuable for
+safety-critical applications. We believe this finding opens
+promising avenues for future work on architecture-driven
+hallucination reduction.
+Takeaway 5
+Recursive multimodal models can refine the predic-
+tions during the iterations, which might be promising
+in suppressing hallucination.
+5. Conclusion
+Recursive computation offers a promising path toward
+parameter-efficient and adaptive inference in LMM, yet ex-
+isting approaches suffer from feature misalignment and un-
+stable multi-step prediction. To overcome these challenges,
+we propose RecursiveVLM, a novel recursive Transformer
+architecture featuring two key innovations: a Recursive
+Connector that fuses multi-layer, modality-aware represen-
+tations to enable stable cross-step refinement, and Mono-
+tonic Recursion Loss that guarantees non-degrading per-
+8
+
+===== PAGE 9 =====
+
+formance across recursion depths, thereby supporting high-
+quality prediction at any step. Notably, our model deliv-
+ers strong results with minimal computation while enabling
+progressive refinement when more resources are available,
+all without increasing model size. This work establishes re-
+cursion as an effective paradigm for deployment-adaptive,
+trustworthy multimodal reasoning, and we hope it inspires
+further research into structured reuse of model capacity for
+efficient and controllable AI.
+References
+[1] Inclusion AI, Biao Gong, Cheng Zou, Chuanyang Zheng,
+Chunluan Zhou, Canxiang Yan, Chunxiang Jin, Chunjie
+Shen, Dandan Zheng, Fudong Wang, et al. Ming-omni:
+A unified multimodal model for perception and generation.
+arXiv preprint arXiv:2506.09344, 2025. 1, 2, 6
+[2] Stanislaw Antol, Aishwarya Agrawal, Jiasen Lu, Margaret
+Mitchell, Dhruv Batra, C Lawrence Zitnick, and Devi Parikh.
+Vqa: Visual question answering. InProceedings of the IEEE
+international conference on computer vision, pages 2425–
+2433, 2015. 1
+[3] Sangmin Bae, Adam Fisch, Hrayr Harutyunyan, Ziwei Ji,
+Seungyeon Kim, and Tal Schuster. Relaxed recursive trans-
+formers: Effective parameter sharing with layer-wise lora. In
+The Thirteenth International Conference on Learning Repre-
+sentations, 2025. 1, 3, 6, 8
+[4] Sangmin Bae, Yujin Kim, Reza Bayat, Sungnyun Kim, Jiy-
+oun Ha, Tal Schuster, Adam Fisch, Hrayr Harutyunyan, Zi-
+wei Ji, Aaron Courville, et al. Mixture-of-recursions: Learn-
+ing dynamic recursive depths for adaptive token-level com-
+putation.arXiv preprint arXiv:2507.10524, 2025. 1, 2, 3
+[5] Jinze Bai, Shuai Bai, Yunfei Chu, Zeyu Cui, Kai Dang,
+Xiaodong Deng, Yang Fan, Wenbin Ge, Yu Han, Fei
+Huang, et al. Qwen technical report.arXiv preprint
+arXiv:2309.16609, 2023. 1, 2
+[6] Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin
+Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun
+Tang, et al. Qwen2. 5-vl technical report.arXiv preprint
+arXiv:2502.13923, 2025. 1, 2
+[7] Lin Chen, Jinsong Li, Xiaoyi Dong, Pan Zhang, Yuhang
+Zang, Zehui Chen, Haodong Duan, Jiaqi Wang, Yu Qiao,
+Dahua Lin, et al. Are we on the right way for evaluating
+large vision-language models?Advances in Neural Informa-
+tion Processing Systems, 37:27056–27087, 2024. 6
+[8] Yilong Chen, Junyuan Shang, Zhenyu Zhang, Yanxi Xie, Ji-
+awei Sheng, Tingwen Liu, Shuohuan Wang, Yu Sun, Hua
+Wu, and Haifeng Wang. Inner thinking transformer: Lever-
+aging dynamic depth scaling to foster adaptive internal think-
+ing.arXiv preprint arXiv:2502.13842, 2025. 3
+[9] Gheorghe Comanici, Eric Bieber, Mike Schaekermann, Ice
+Pasupat, Noveen Sachdeva, Inderjit Dhillon, Marcel Blis-
+tein, Ori Ram, Dan Zhang, Evan Rosen, et al. Gemini 2.5:
+Pushing the frontier with advanced reasoning, multimodality,
+long context, and next generation agentic capabilities.arXiv
+preprint arXiv:2507.06261, 2025. 1, 2
+[10] R ´obert Csord´as, Kazuki Irie, J ¨urgen Schmidhuber, Christo-
+pher Potts, and Christopher D Manning. Moeut: Mixture-of-
+experts universal transformers.Advances in Neural Informa-
+tion Processing Systems, 37:28589–28614, 2024. 3
+[11] Mostafa Dehghani, Stephan Gouws, Oriol Vinyals, Jakob
+Uszkoreit, and Lukasz Kaiser. Universal transformers. InIn-
+ternational Conference on Learning Representations, 2018.
+3
+[12] Ying Fan, Yilun Du, Kannan Ramchandran, and Kangwook
+Lee. Looped transformers for length generalization. InThe
+Thirteenth International Conference on Learning Represen-
+tations, 2025. 3, 6
+[13] Khashayar Gatmiry, Nikunj Saunshi, Sashank J Reddi, Ste-
+fanie Jegelka, and Sanjiv Kumar. Can looped transformers
+learn to implement multi-step gradient descent for in-context
+learning? InInternational Conference on Machine Learning,
+pages 15130–15152. PMLR, 2024. 3
+[14] Jonas Geiping, Sean McLeish, Neel Jain, John Kirchenbauer,
+Siddharth Singh, Brian R Bartoldson, Bhavya Kailkhura,
+Abhinav Bhatele, and Tom Goldstein. Scaling up test-time
+compute with latent reasoning: A recurrent depth approach.
+arXiv preprint arXiv:2502.05171, 2025. 3
+[15] Angeliki Giannou, Shashank Rajput, Jy-yong Sohn, Kang-
+wook Lee, Jason D Lee, and Dimitris Papailiopoulos.
+Looped transformers as programmable computers. InIn-
+ternational Conference on Machine Learning, pages 11398–
+11442. PMLR, 2023. 1, 3
+[16] Tianrui Guan, Fuxiao Liu, Xiyang Wu, Ruiqi Xian, Zongxia
+Li, Xiaoyu Liu, Xijun Wang, Lichang Chen, Furong Huang,
+Yaser Yacoob, et al. Hallusionbench: an advanced diagnos-
+tic suite for entangled language hallucination and visual il-
+lusion in large vision-language models. InProceedings of
+the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition, pages 14375–14385, 2024. 6
+[17] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun.
+Deep residual learning for image recognition. InProceed-
+ings of the IEEE conference on computer vision and pattern
+recognition, pages 770–778, 2016. 5
+[18] MD Zakir Hossain, Ferdous Sohel, Mohd Fairuz Shiratud-
+din, and Hamid Laga. A comprehensive survey of deep learn-
+ing for image captioning.ACM Computing Surveys (CsUR),
+51(6):1–36, 2019. 1
+[19] Aniruddha Kembhavi, Mike Salvato, Eric Kolve, Minjoon
+Seo, Hannaneh Hajishirzi, and Ali Farhadi. A diagram is
+worth a dozen images. InEuropean conference on computer
+vision, pages 235–251. Springer, 2016. 6
+[20] Simon Kornblith, Mohammad Norouzi, Honglak Lee, and
+Geoffrey Hinton. Similarity of neural network represen-
+tations revisited. InInternational conference on machine
+learning, pages 3519–3529. PMlR, 2019. 2
+[21] Zhenzhong Lan, Mingda Chen, Sebastian Goodman, Kevin
+Gimpel, Piyush Sharma, and Radu Soricut. Albert: A lite
+bert for self-supervised learning of language representations.
+arXiv preprint arXiv:1909.11942, 2019. 3
+[22] Boxun Li, Yadong Li, Zhiyuan Li, Congyi Liu, Weilin Liu,
+Guowei Niu, Zheyue Tan, Haiyang Xu, Zhuyu Yao, Tao
+Yuan, et al. Megrez2 technical report.arXiv preprint
+arXiv:2507.17728, 2025. 3
+9
+
+===== PAGE 10 =====
+
+[23] Junnan Li, Dongxu Li, Caiming Xiong, and Steven Hoi.
+Blip: Bootstrapping language-image pre-training for unified
+vision-language understanding and generation. InInterna-
+tional conference on machine learning, pages 12888–12900.
+PMLR, 2022. 2
+[24] Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee.
+Visual instruction tuning.Advances in neural information
+processing systems, 36:34892–34916, 2023. 2
+[25] Yuan Liu, Haodong Duan, Yuanhan Zhang, Bo Li, Songyang
+Zhang, Wangbo Zhao, Yike Yuan, Jiaqi Wang, Conghui He,
+Ziwei Liu, et al. Mmbench: Is your multi-modal model an
+all-around player? InEuropean conference on computer vi-
+sion, pages 216–233. Springer, 2024. 6
+[26] Yuliang Liu, Zhang Li, Mingxin Huang, Biao Yang, Wenwen
+Yu, Chunyuan Li, Xu-Cheng Yin, Cheng-Lin Liu, Lianwen
+Jin, and Xiang Bai. Ocrbench: on the hidden mystery of
+ocr in large multimodal models.Science China Information
+Sciences, 67(12):220102, 2024. 6
+[27] Zechun Liu, Changsheng Zhao, Forrest Iandola, Chen Lai,
+Yuandong Tian, Igor Fedorov, Yunyang Xiong, Ernie Chang,
+Yangyang Shi, Raghuraman Krishnamoorthi, et al. Mo-
+bilellm: Optimizing sub-billion parameter language models
+for on-device use cases. InForty-first International Confer-
+ence on Machine Learning, 2024. 1, 3
+[28] Pan Lu, Hritik Bansal, Tony Xia, Jiacheng Liu, Chunyuan Li,
+Hannaneh Hajishirzi, Hao Cheng, Kai-Wei Chang, Michel
+Galley, and Jianfeng Gao. Mathvista: Evaluating mathemat-
+ical reasoning of foundation models in visual contexts.arXiv
+preprint arXiv:2310.02255, 2023. 6
+[29] Lingchen Meng, Jianwei Yang, Rui Tian, Xiyang Dai, Zux-
+uan Wu, Jianfeng Gao, and Yu-Gang Jiang. Deepstack:
+Deeply stacking visual tokens is surprisingly simple and ef-
+fective for lmms.Advances in Neural Information Process-
+ing Systems, 37:23464–23487, 2024. 2
+[30] OpenAI. Gpt-4v(ision) system card. 2023. 1, 2
+[31] Nikunj Saunshi, Nishanth Dikkala, Zhiyuan Li, Sanjiv Ku-
+mar, and Sashank J. Reddi. Reasoning with latent thoughts:
+On the power of looped transformers. InThe Thirteenth In-
+ternational Conference on Learning Representations, 2025.
+1, 3, 6
+[32] Sho Takase and Shun Kiyono. Lessons on parameter sharing
+across layers in transformers. InProceedings of The Fourth
+Workshop on Simple and Efficient Natural Language Pro-
+cessing (SustaiNLP), pages 78–90, 2023. 3
+[33] Gemini Team, Rohan Anil, Sebastian Borgeaud, Jean-
+Baptiste Alayrac, Jiahui Yu, Radu Soricut, Johan Schalkwyk,
+Andrew M Dai, Anja Hauth, Katie Millican, et al. Gemini: a
+family of highly capable multimodal models.arXiv preprint
+arXiv:2312.11805, 2023. 1, 2
+[34] Gemini Team, Petko Georgiev, Ving Ian Lei, Ryan Burnell,
+Libin Bai, Anmol Gulati, Garrett Tanzer, Damien Vincent,
+Zhufeng Pan, Shibo Wang, et al. Gemini 1.5: Unlocking
+multimodal understanding across millions of tokens of con-
+text.arXiv preprint arXiv:2403.05530, 2024. 1, 2
+[35] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszko-
+reit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia
+Polosukhin. Attention is all you need.Advances in neural
+information processing systems, 30, 2017. 6
+[36] Peng Wang, Shuai Bai, Sinan Tan, Shijie Wang, Zhihao Fan,
+Jinze Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin
+Ge, et al. Qwen2-vl: Enhancing vision-language model’s
+perception of the world at any resolution.arXiv preprint
+arXiv:2409.12191, 2024. 1, 2
+[37] Jiayang Wu, Wensheng Gan, Zefeng Chen, Shicheng Wan,
+and Philip S Yu. Multimodal large language models: A sur-
+vey. In2023 IEEE International Conference on Big Data
+(BigData), pages 2247–2256. IEEE, 2023. 1
+[38] Liu Yang, Kangwook Lee, Robert D Nowak, and Dimitris
+Papailiopoulos. Looped transformers are better at learning
+learning algorithms. InThe Twelfth International Conference
+on Learning Representations, 2024. 3
+[39] Weihao Yu, Zhengyuan Yang, Linjie Li, Jianfeng Wang,
+Kevin Lin, Zicheng Liu, Xinchao Wang, and Lijuan Wang.
+Mm-vet: Evaluating large multimodal models for integrated
+capabilities.arXiv preprint arXiv:2308.02490, 2023. 6
+[40] Xiang Yue, Yuansheng Ni, Kai Zhang, Tianyu Zheng, Ruoqi
+Liu, Ge Zhang, Samuel Stevens, Dongfu Jiang, Weiming
+Ren, Yuxuan Sun, et al. Mmmu: A massive multi-discipline
+multimodal understanding and reasoning benchmark for ex-
+pert agi. InProceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition, pages 9556–
+9567, 2024. 6
+[41] Boyi Zeng, Shixiang Song, Siyuan Huang, Yixuan Wang, He
+Li, Ziwei He, Xinbing Wang, Zhiyu Li, and Zhouhan Lin.
+Pretraining language models to ponder in continuous space.
+arXiv preprint arXiv:2505.20674, 2025. 3
+[42] Biao Zhang and Rico Sennrich. Root mean square layer nor-
+malization.Advances in neural information processing sys-
+tems, 32, 2019. 5
+[43] Deyao Zhu, Jun Chen, Xiaoqian Shen, Xiang Li, and Mo-
+hamed Elhoseiny. Minigpt-4: Enhancing vision-language
+understanding with advanced large language models.arXiv
+preprint arXiv:2304.10592, 2023. 2
+[44] Rui-Jie Zhu, Zixuan Wang, Kai Hua, Tianyu Zhang, Ziniu
+Li, Haoran Que, Boyi Wei, Zixin Wen, Fan Yin, He Xing,
+et al. Scaling latent reasoning via looped language models.
+arXiv preprint arXiv:2510.25741, 2025. 1, 2, 6, 8
+10
+
+===== PAGE 11 =====
+
+Looping Back to Move Forward: Recursive Transformers for Efficient and
+Flexible Large Multimodal Models
+Supplementary Material
+1. Examples for the refinement of recursive
+models
+In this supplementary material, we present a series of
+prediction examples of the recursive model. The Recur-
+siveVLM exhibits improved performance when comparing
+the predictions of step1and step2. As shown in the follow-
+ing examples, with only1step,i.e.vanilla straight-forward
+Transformers, the wrong prediction tokens can mislead the
+complete answers. While with the2-step recursion, the
+model could refine the predictions and correct critical to-
+kens. This property is essential to multiple vision-language
+understanding tasks, including object recognition, spatial
+understanding, mathematical understanding, chart under-
+standing, and common knowledge reasoning.
+Example 1: Object recognition
+Question What should we add in the third step?
+Step 1 The third step in the pancake recipe involves adding the dry ingredients to the wet ingredients. This
+is typically done by mixing the flour, sugar, baking powder, and salt in a bowl. The image shows a
+whisk and a bowl, which are used for this purpose. Therefore, the correct answer is:\n\nB. Flour,
+sugar, baking powder, and salt.
+Step 2 The third step in the pancake recipe involves adding milk to the mixture. This is indicated by the
+image showing a bowl with a whisk and a milk carton, suggesting that milk is being poured into the
+bowl. Therefore, the correct answer is:\n\nB. Milk.
+Table 7. RecursiveVLM corrects the critical tokens in the second recursion step, which leads to the right final predictions.
+1
+
+===== PAGE 12 =====
+
+Example 2: Spatial understanding
+Question Which room is bigger, the double garage or the living room?
+Step 1 The living room is bigger.\nFinal Answer: Living Room.
+Step 2 The double garage has dimensions of 19 feet by 21.25 feet, which gives a total area of 403.75 square
+feet. The living room has dimensions of 21.5 feet by 18.5 feet, which gives a total area of 397.75
+square feet. Therefore, the double garage is bigger. Final Answer: The double garage.
+Table 8. The non-recursive prediction ignores the thinking and presents wrong answers. The recursive predictions precisely recognize the
+rooms and calculate their sizes, leading to the correct comparison.
+Example 3: Math understanding
+Question What is d in the last equation?
+Step 1 The target equation to solve is 7d-4=11d-9. It is a subtraction problem.The variable in the equation
+is d. The equation can be equivalent to: d = (11 - 7) / (7 - 4). Then we can get 4. Final answer: 4
+Step 2 The target equation to solve is 7d-4=11d-9. It is a subtraction problem.The variable in the equation
+is d. The equation can be equivalent to: 7d - 11d = -9 + 4. Then we can get -4d = -5. Finally, the
+value of d is 5/4. Final answer: 1.25
+Table 9. Both steps recognize the correct equations to solved. However, the non-recursive model performs a wrong transformation of the
+equation. The recursive model is correct.
+2
+
+===== PAGE 13 =====
+
+Example 4: Common Knowledge and Reasoning
+Question Can you explain this meme?
+Step 1 The meme humorously illustrates the common experience of students in exams, where they tend to
+write more in the first and last pages of the exam paper, and less in the middle pages.\n\n1. **Top
+Section - “My Handwriting In Exams”**: The meme starts with a title that sets the context for the
+viewer, indicating that the content is about a student’s handwriting during exams.\n\n2. **First
+Two Pages**: The text here reads, “Global warming is definitely a very huge issue in front of this
+entire world. It’s causing several disturbances in the.” This suggests that the student has written a
+significant amount of text in the first two pages, possibly about the topic of global warming.\n\n3.
+**Middle Pages**: The text here reads, “Also it can cause the melting of glaciers and melting of
+sea ice, which can make the sea level rise.” This indicates that the student has written about the
+consequences of global warming, such as the melting of glaciers and sea ice, and the resulting rise
+in sea levels.\n\n4. **Last Two Pages**: The text here reads, “The last two pages are about the
+impact of global warming on the environment and the economy.” This suggests that the student has
+written about the broader impacts of global warming, including its effects on the environment and
+the economy.\n\nThe meme uses a simple and relatable scenario to highlight a common experience,
+making it humorous and easy to understand.
+Step 2 The meme humorously illustrates the phenomenon of students starting strong in exams but los-
+ing focus and energy as they progress. The top section, labeled “First two pages,” shows a neat
+and focused handwritten text about global warming. The middle section, “Middle pages,” shows a
+decline in handwriting quality, with the text becoming less coherent and more disorganized. The
+bottom section, “Last two pages,” shows a significant drop in handwriting quality, with illegible
+scribbles and a lack of coherence, symbolizing the student’s struggle to maintain focus and energy
+towards the end of the exam. The image is a light-hearted take on the common experience of students
+feeling tired or distracted during exams.
+Table 10. An example illustrates how a recursive model improves on common knowledge and reasoning. The non-recursive model does
+not understand the meme, reading non-existent words in the image. The recursive model, on the other hand, can understand the memes and
+correctly recognize the content in the image.
+3
+
+===== PAGE 14 =====
+
+Example 5: Chart understanding
+Question Based on the image, what is the total international awareness of Tina Fey?
+Step 1 The image shows the international awareness of Tina Fey for different territories.\nThe international
+awareness for the UK is 45%.\nFinal Answer: 45%
+Step 2 The international average for Tina Fey is 35%.\nFinal Answer: 35%.
+Table 11. The non-recursive model encounters hallucination, as it predicts “for the UK” which is not mentioned above. The recursive
+model finds the correct answer directly.
+4

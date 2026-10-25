@@ -1,0 +1,8 @@
+{
+  "documents": 1448000,
+  "target_train_tokens": 1507983296,
+  "target_val_tokens": 1000000,
+  "tokens_per_second": 367427,
+  "train_tokens": 1507861113,
+  "val_tokens": 1000000
+}

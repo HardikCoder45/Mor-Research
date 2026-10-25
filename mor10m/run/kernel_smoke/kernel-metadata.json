@@ -1,0 +1,16 @@
+{
+  "id": "hardikarora83i2492/mor-10m-token-choice-gpu-test",
+  "title": "mor 10m token choice gpu test",
+  "code_file": "kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "hardikarora83i2492/mor-10m-token-choice-source"
+  ],
+  "kernel_sources": [],
+  "competition_sources": [],
+  "model_sources": []
+}

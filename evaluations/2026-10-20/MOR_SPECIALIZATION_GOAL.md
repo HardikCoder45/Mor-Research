@@ -1,0 +1,17 @@
+# Revised research objective — MoR under 10M parameters
+
+User direction: build a decent specialized MoR language model under 10M total unique parameters, aiming to match a current approximately 1B-parameter model on accurate task results. The primary research path is MoR, rather than switching the project to FlashSkip-100M or a pretrained 350M model. Domain remains to be selected by the user.
+
+Verified implementation: 9,965,344 total unique parameters; token embedding/tied output 7,864,320; seven unique attention/FFN blocks 2,100,224; router and its norm 640; final norm 160. Width 160, vocabulary 49,152, FFN width 496, GQA 5 query/1 KV head, head dimension 32, context 512. Unique prefix and suffix blocks surround a shared five-block cycle repeated one, two or three times per token. Effective block applications per token: 7/12/17. Router chooses depth once from the prefix hidden state, not after each cycle. Exited tokens are absent from deeper recursion attention. No incremental generation KV cache is implemented.
+
+The 100M-token checkpoint has not matched the local approximately 100M-parameter model on the existing common diagnostics. Training budgets and architecture differ; that test is not an equal-budget ablation. No approximately 1B public baseline was evaluated. The cited MoR paper reports model scales of 135M–1.7B and does not establish that a 10M model matches a 1B model generally: https://arxiv.org/abs/2507.10524
+
+Define success on one domain with a fixed test distribution, exact/F1/pass-rate metric as appropriate, minimum absolute useful accuracy, and a pre-registered non-inferiority margin (proposed: 2 percentage points). Use paired confidence intervals and sufficient test data. Choose an exact current approximately 1B checkpoint and immutable revision; compare the frozen version and a version adapted with the same domain data. Public candidate: https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct (1.2B, not exactly 1B). It is a candidate comparator, not a claimed strongest current model.
+
+Use the same input information, document context and tool access; if retrieval/calculators are included, measure system performance and model-only performance separately. A 1B model is approximately 100 times a 10M model in parameter count; a 100M model is approximately 10 times.
+
+Priorities before long Kaggle training: establish a domain dataset and baseline; audit routing distributions and forced-depth ablations; compare dense 10M and fixed-recursion 10M controls under both equal tokens and equal compute; distill verified domain answers from a stronger teacher; evaluate accuracy and confidence calibration with no benchmark training contamination. Add more recursions only with training and measured evidence, not as an inference-only capacity multiplier.
+
+Architecture bottleneck: 78.9% of parameters are embeddings, leaving about 2.1M for all seven processing blocks. Test a new domain tokenizer (for example 8K/16K vocab) and reallocate saved parameters to wider blocks while maintaining <10M total. This requires a new architecture/training run or an explicit vocabulary-transfer method; it cannot safely resume the old checkpoint unchanged. Smaller vocabulary may increase sequence lengths, so compare useful information per context and end-to-end cost.
+
+Matching a roughly 1B model on a narrow task is an experimental target, not an established capability or promised outcome. General open-domain equivalence is not a defensible expectation from present evidence. Kaggle training has not been launched.

@@ -1,0 +1,1862 @@
+{
+  "checkpoint": "/Users/hardikarora/Desktop/MAIN/research/mor10m/run/downloads/300000000/result/checkpoints/checkpoint_0300023808",
+  "tokens": 300023808,
+  "recorded": {
+    "loss": 4.329064682126045,
+    "tokens_seen": 300023808,
+    "val": {
+      "loss": 4.380463033914566,
+      "perplexity": 79.87500968219786,
+      "tokens": 32768
+    }
+  },
+  "heldout": {
+    "nll": 5.008187235137562,
+    "perplexity": 149.63324026409026,
+    "tokens": 324,
+    "per_text": [
+      {
+        "tokens": 40,
+        "nll": 5.1848804473876955
+      },
+      {
+        "tokens": 31,
+        "nll": 4.9527484524634575
+      },
+      {
+        "tokens": 34,
+        "nll": 4.956960790297565
+      },
+      {
+        "tokens": 27,
+        "nll": 4.9184214274088545
+      },
+      {
+        "tokens": 29,
+        "nll": 5.3175069874730605
+      },
+      {
+        "tokens": 34,
+        "nll": 4.028229657341452
+      },
+      {
+        "tokens": 33,
+        "nll": 5.062492601799242
+      },
+      {
+        "tokens": 31,
+        "nll": 4.8784479941091226
+      },
+      {
+        "tokens": 34,
+        "nll": 5.4321737850413605
+      },
+      {
+        "tokens": 31,
+        "nll": 5.362343080582157
+      }
+    ]
+  },
+  "grammar": {
+    "accuracy": 0.95,
+    "correct": 19,
+    "total": 20,
+    "mean_margin": 0.5898791946683611,
+    "details": [
+      {
+        "good": "The cat is sleeping on the sofa.",
+        "bad": "The cat are sleeping on the sofa.",
+        "good_mean_logp": -4.998500823974609,
+        "bad_mean_logp": -5.519189834594727,
+        "margin": 0.5206890106201172
+      },
+      {
+        "good": "Those apples are ripe.",
+        "bad": "Those apples is ripe.",
+        "good_mean_logp": -5.617437362670898,
+        "bad_mean_logp": -6.305481910705566,
+        "margin": 0.688044548034668
+      },
+      {
+        "good": "She has finished her homework.",
+        "bad": "She have finished her homework.",
+        "good_mean_logp": -4.5772968292236325,
+        "bad_mean_logp": -5.243110275268554,
+        "margin": 0.6658134460449219
+      },
+      {
+        "good": "He does not like cold coffee.",
+        "bad": "He do not like cold coffee.",
+        "good_mean_logp": -5.452583312988281,
+        "bad_mean_logp": -5.814908345540364,
+        "margin": 0.36232503255208304
+      },
+      {
+        "good": "I saw an elephant at the zoo.",
+        "bad": "I saw a elephant at the zoo.",
+        "good_mean_logp": -4.527487618582589,
+        "bad_mean_logp": -4.816491808210101,
+        "margin": 0.2890041896275113
+      },
+      {
+        "good": "There are three books on the desk.",
+        "bad": "There is three books on the desk.",
+        "good_mean_logp": -3.8822318485804965,
+        "bad_mean_logp": -4.400873729160854,
+        "margin": 0.5186418805803577
+      },
+      {
+        "good": "Each student has a pencil.",
+        "bad": "Each student have a pencil.",
+        "good_mean_logp": -4.384871292114258,
+        "bad_mean_logp": -4.851735687255859,
+        "margin": 0.4668643951416014
+      },
+      {
+        "good": "The children were playing outside.",
+        "bad": "The children was playing outside.",
+        "good_mean_logp": -5.809561538696289,
+        "bad_mean_logp": -6.756964111328125,
+        "margin": 0.9474025726318365
+      },
+      {
+        "good": "If it rains, we will stay inside.",
+        "bad": "If it rain, we will stay inside.",
+        "good_mean_logp": -4.018869876861572,
+        "bad_mean_logp": -4.6473588943481445,
+        "margin": 0.6284890174865723
+      },
+      {
+        "good": "Neither answer is correct.",
+        "bad": "Neither answer are correct.",
+        "good_mean_logp": -4.425802230834961,
+        "bad_mean_logp": -5.200753211975098,
+        "margin": 0.7749509811401367
+      },
+      {
+        "good": "She went to the store yesterday.",
+        "bad": "She go to the store yesterday.",
+        "good_mean_logp": -4.112560907999675,
+        "bad_mean_logp": -4.5834197998046875,
+        "margin": 0.4708588918050127
+      },
+      {
+        "good": "The keys are on the table.",
+        "bad": "The keys is on the table.",
+        "good_mean_logp": -4.066237767537435,
+        "bad_mean_logp": -4.625211397806804,
+        "margin": 0.5589736302693691
+      },
+      {
+        "good": "My brother and I are ready.",
+        "bad": "My brother and I is ready.",
+        "good_mean_logp": -4.018661181131999,
+        "bad_mean_logp": -4.416452725728353,
+        "margin": 0.3977915445963536
+      },
+      {
+        "good": "This book belongs to me.",
+        "bad": "This book belong to me.",
+        "good_mean_logp": -4.174539184570312,
+        "bad_mean_logp": -5.095356750488281,
+        "margin": 0.9208175659179689
+      },
+      {
+        "good": "The woman who lives next door is a doctor.",
+        "bad": "The woman who lives next door are a doctor.",
+        "good_mean_logp": -4.635230170355903,
+        "bad_mean_logp": -5.178304460313585,
+        "margin": 0.5430742899576826
+      },
+      {
+        "good": "We have been waiting for an hour.",
+        "bad": "We has been waiting for an hour.",
+        "good_mean_logp": -3.718581335885184,
+        "bad_mean_logp": -4.425079618181501,
+        "margin": 0.7064982822963168
+      },
+      {
+        "good": "The dog chased its tail.",
+        "bad": "The dog chased it's tail.",
+        "good_mean_logp": -6.600829315185547,
+        "bad_mean_logp": -6.552313486735026,
+        "margin": -0.048515828450520715
+      },
+      {
+        "good": "She speaks English fluently.",
+        "bad": "She speaks English fluent.",
+        "good_mean_logp": -6.507538318634033,
+        "bad_mean_logp": -7.838293552398682,
+        "margin": 1.3307552337646484
+      },
+      {
+        "good": "The red car moves quickly.",
+        "bad": "The red car move quickly.",
+        "good_mean_logp": -6.636651611328125,
+        "bad_mean_logp": -7.383119201660156,
+        "margin": 0.7464675903320312
+      },
+      {
+        "good": "These flowers smell wonderful.",
+        "bad": "These flowers smells wonderful.",
+        "good_mean_logp": -8.17081069946289,
+        "bad_mean_logp": -8.479448318481445,
+        "margin": 0.3086376190185547
+      }
+    ]
+  },
+  "cloze": {
+    "accuracy": 1.0,
+    "correct": 12,
+    "total": 12,
+    "mean_margin": 2.9139247983694077,
+    "boundary_changes": 0,
+    "details": [
+      {
+        "prompt": "A physician usually works in a",
+        "choices": [
+          " hospital",
+          " bakery",
+          " forest",
+          " garage"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -3.347487688064575,
+          -13.79505729675293,
+          -10.654918670654297,
+          -11.265020370483398
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          6,
+          6,
+          6,
+          6
+        ],
+        "margin": 7.307430982589722
+      },
+      {
+        "prompt": "A person uses a toothbrush to clean their",
+        "choices": [
+          " teeth",
+          " shoes",
+          " windows",
+          " books"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -0.7686452269554138,
+          -5.7977294921875,
+          -6.652963638305664,
+          -9.153849601745605
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          8,
+          8,
+          8,
+          8
+        ],
+        "margin": 5.029084265232086
+      },
+      {
+        "prompt": "The opposite of cold is",
+        "choices": [
+          " hot",
+          " narrow",
+          " quiet",
+          " empty"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -7.6023783683776855,
+          -11.095099449157715,
+          -10.894500732421875,
+          -9.74455451965332
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          5,
+          5,
+          5,
+          5
+        ],
+        "margin": 2.1421761512756348
+      },
+      {
+        "prompt": "A bird normally builds a",
+        "choices": [
+          " nest",
+          " engine",
+          " ladder",
+          " bottle"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -4.6085968017578125,
+          -10.470331192016602,
+          -9.826089859008789,
+          -8.901853561401367
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          5,
+          5,
+          5,
+          5
+        ],
+        "margin": 4.293256759643555
+      },
+      {
+        "prompt": "You wear gloves on your",
+        "choices": [
+          " hands",
+          " ears",
+          " knees",
+          " teeth"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -4.0633039474487305,
+          -6.560482978820801,
+          -6.434016227722168,
+          -5.404045104980469
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          5,
+          5,
+          5,
+          5
+        ],
+        "margin": 1.3407411575317383
+      },
+      {
+        "prompt": "A chef uses an oven to",
+        "choices": [
+          " cook",
+          " swim",
+          " write",
+          " drive"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -4.613152980804443,
+          -9.267759323120117,
+          -5.056273937225342,
+          -6.975778102874756
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          6,
+          6,
+          6,
+          6
+        ],
+        "margin": 0.44312095642089844
+      },
+      {
+        "prompt": "A library is a place where people borrow",
+        "choices": [
+          " books",
+          " cars",
+          " hammers",
+          " shoes"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -5.288054466247559,
+          -9.352010726928711,
+          -7.812719345092773,
+          -12.055362701416016
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          2,
+          1
+        ],
+        "common_prefix_tokens": [
+          8,
+          8,
+          8,
+          8
+        ],
+        "margin": 2.524664878845215
+      },
+      {
+        "prompt": "A clock is used to tell",
+        "choices": [
+          " time",
+          " weight",
+          " color",
+          " distance"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -7.582786560058594,
+          -8.756505012512207,
+          -9.707501411437988,
+          -9.151026725769043
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          6,
+          6,
+          6,
+          6
+        ],
+        "margin": 1.1737184524536133
+      },
+      {
+        "prompt": "A farmer may grow wheat in a",
+        "choices": [
+          " field",
+          " bathtub",
+          " suitcase",
+          " hallway"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -5.15083122253418,
+          -12.751642227172852,
+          -6.731083869934082,
+          -6.622870445251465
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          2,
+          2
+        ],
+        "common_prefix_tokens": [
+          7,
+          7,
+          7,
+          7
+        ],
+        "margin": 1.4720392227172852
+      },
+      {
+        "prompt": "People usually sleep in a",
+        "choices": [
+          " bed",
+          " sink",
+          " bicycle",
+          " oven"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -6.328324794769287,
+          -11.67376708984375,
+          -11.17098617553711,
+          -12.241793632507324
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          5,
+          5,
+          5,
+          5
+        ],
+        "margin": 4.842661380767822
+      },
+      {
+        "prompt": "A pencil is commonly used for",
+        "choices": [
+          " writing",
+          " boiling",
+          " driving",
+          " swimming"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -4.4896955490112305,
+          -8.770930290222168,
+          -9.040724754333496,
+          -9.561317443847656
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          6,
+          6,
+          6,
+          6
+        ],
+        "margin": 4.2812347412109375
+      },
+      {
+        "prompt": "The color of fresh grass is usually",
+        "choices": [
+          " green",
+          " purple",
+          " silver",
+          " black"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -5.656508445739746,
+          -7.544572830200195,
+          -10.063802719116211,
+          -5.773477077484131
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          7,
+          7,
+          7,
+          7
+        ],
+        "margin": 0.11696863174438477
+      }
+    ]
+  },
+  "facts": {
+    "accuracy": 0.4166666666666667,
+    "correct": 5,
+    "total": 12,
+    "mean_margin": -0.49518416325251263,
+    "boundary_changes": 0,
+    "details": [
+      {
+        "prompt": "The capital of France is",
+        "choices": [
+          " Paris",
+          " London",
+          " Rome",
+          " Madrid"
+        ],
+        "answer": 0,
+        "prediction": 2,
+        "scores": [
+          -7.448813438415527,
+          -8.014527320861816,
+          -7.4023566246032715,
+          -9.309638023376465
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          5,
+          5,
+          5,
+          5
+        ],
+        "margin": -0.04645681381225586
+      },
+      {
+        "prompt": "The planet known as the Red Planet is",
+        "choices": [
+          " Mars",
+          " Venus",
+          " Jupiter",
+          " Mercury"
+        ],
+        "answer": 0,
+        "prediction": 2,
+        "scores": [
+          -9.191910743713379,
+          -10.656927108764648,
+          -8.674546241760254,
+          -11.059154510498047
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          8,
+          8,
+          8,
+          8
+        ],
+        "margin": -0.517364501953125
+      },
+      {
+        "prompt": "Water freezes at zero degrees",
+        "choices": [
+          " Celsius",
+          " Fahrenheit",
+          " Kelvin",
+          " meters"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -2.1992247104644775,
+          -3.38810133934021,
+          -9.253939628601074,
+          -12.000507354736328
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          5,
+          5,
+          5,
+          5
+        ],
+        "margin": 1.1888766288757324
+      },
+      {
+        "prompt": "The largest planet in the Solar System is",
+        "choices": [
+          " Jupiter",
+          " Earth",
+          " Mars",
+          " Venus"
+        ],
+        "answer": 0,
+        "prediction": 1,
+        "scores": [
+          -6.614138603210449,
+          -4.286266326904297,
+          -8.378750801086426,
+          -9.177471160888672
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          8,
+          8,
+          8,
+          8
+        ],
+        "margin": -2.3278722763061523
+      },
+      {
+        "prompt": "The primary language of Brazil is",
+        "choices": [
+          " Portuguese",
+          " Spanish",
+          " French",
+          " German"
+        ],
+        "answer": 0,
+        "prediction": 1,
+        "scores": [
+          -9.485310554504395,
+          -7.156521797180176,
+          -8.290058135986328,
+          -10.313448905944824
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          6,
+          6,
+          6,
+          6
+        ],
+        "margin": -2.3287887573242188
+      },
+      {
+        "prompt": "H2O is the chemical formula for",
+        "choices": [
+          " water",
+          " oxygen",
+          " salt",
+          " iron"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -6.4044880867004395,
+          -7.315040588378906,
+          -8.815263748168945,
+          -7.219740867614746
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          8,
+          8,
+          8,
+          8
+        ],
+        "margin": 0.8152527809143066
+      },
+      {
+        "prompt": "There are seven days in a",
+        "choices": [
+          " week",
+          " year",
+          " century",
+          " minute"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -1.7963025569915771,
+          -2.2537310123443604,
+          -8.60446548461914,
+          -4.885198593139648
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          6,
+          6,
+          6,
+          6
+        ],
+        "margin": 0.4574284553527832
+      },
+      {
+        "prompt": "The Earth travels around the",
+        "choices": [
+          " Sun",
+          " Moon",
+          " Mars",
+          " ocean"
+        ],
+        "answer": 0,
+        "prediction": 3,
+        "scores": [
+          -5.703179836273193,
+          -6.8712005615234375,
+          -9.29565143585205,
+          -3.332080841064453
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          5,
+          5,
+          5,
+          5
+        ],
+        "margin": -2.3710989952087402
+      },
+      {
+        "prompt": "The author of Hamlet was William",
+        "choices": [
+          " Shakespeare",
+          " Darwin",
+          " Newton",
+          " Edison"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -2.655522108078003,
+          -6.0136823654174805,
+          -7.182989120483398,
+          -9.390539169311523
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          6,
+          6,
+          6,
+          6
+        ],
+        "margin": 3.3581602573394775
+      },
+      {
+        "prompt": "The ocean between Africa and Australia is the",
+        "choices": [
+          " Indian",
+          " Arctic",
+          " Atlantic",
+          " Southern"
+        ],
+        "answer": 0,
+        "prediction": 1,
+        "scores": [
+          -10.942893028259277,
+          -7.077925682067871,
+          -8.847413063049316,
+          -8.72751235961914
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          8,
+          8,
+          8,
+          8
+        ],
+        "margin": -3.8649673461914062
+      },
+      {
+        "prompt": "A whale is a",
+        "choices": [
+          " mammal",
+          " reptile",
+          " insect",
+          " plant"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -7.12369441986084,
+          -10.244524955749512,
+          -9.830528259277344,
+          -8.1619291305542
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          4,
+          4,
+          4,
+          4
+        ],
+        "margin": 1.0382347106933594
+      },
+      {
+        "prompt": "The gas humans need to breathe is",
+        "choices": [
+          " oxygen",
+          " helium",
+          " neon",
+          " argon"
+        ],
+        "answer": 0,
+        "prediction": 3,
+        "scores": [
+          -7.798360824584961,
+          -9.976428985595703,
+          -13.13978099822998,
+          -6.454746723175049
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          2
+        ],
+        "common_prefix_tokens": [
+          7,
+          7,
+          7,
+          7
+        ],
+        "margin": -1.343614101409912
+      }
+    ]
+  },
+  "commonsense": {
+    "accuracy": 0.8333333333333334,
+    "correct": 10,
+    "total": 12,
+    "mean_margin": 2.3504963517189026,
+    "boundary_changes": 0,
+    "details": [
+      {
+        "prompt": "If a glass falls onto a hard floor, it may",
+        "choices": [
+          " break",
+          " grow",
+          " sing",
+          " freeze"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -6.675370693206787,
+          -6.820075511932373,
+          -11.25654125213623,
+          -9.03450870513916
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          11,
+          11,
+          11,
+          11
+        ],
+        "margin": 0.14470481872558594
+      },
+      {
+        "prompt": "When people are hungry, they usually want to",
+        "choices": [
+          " eat",
+          " sleep",
+          " paint",
+          " whisper"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -2.088075876235962,
+          -3.8649652004241943,
+          -11.109918594360352,
+          -13.087353706359863
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          9,
+          9,
+          9,
+          9
+        ],
+        "margin": 1.7768893241882324
+      },
+      {
+        "prompt": "If a room is dark, you can turn on a",
+        "choices": [
+          " light",
+          " pillow",
+          " spoon",
+          " shoe"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -4.758157253265381,
+          -8.2665433883667,
+          -8.654475212097168,
+          -9.812421798706055
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          11,
+          11,
+          11,
+          11
+        ],
+        "margin": 3.5083861351013184
+      },
+      {
+        "prompt": "An umbrella is useful when it is",
+        "choices": [
+          " raining",
+          " sleeping",
+          " cooking",
+          " reading"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -5.132209300994873,
+          -10.835291862487793,
+          -10.166592597961426,
+          -10.924295425415039
+        ],
+        "candidate_token_counts": [
+          2,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          7,
+          7,
+          7,
+          7
+        ],
+        "margin": 5.034383296966553
+      },
+      {
+        "prompt": "Ice left in warm sunlight will usually",
+        "choices": [
+          " melt",
+          " grow",
+          " sharpen",
+          " multiply"
+        ],
+        "answer": 0,
+        "prediction": 1,
+        "scores": [
+          -7.183553218841553,
+          -4.2447919845581055,
+          -10.704373359680176,
+          -8.780214309692383
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          7,
+          7,
+          7,
+          7
+        ],
+        "margin": -2.9387612342834473
+      },
+      {
+        "prompt": "A key can be used to open a",
+        "choices": [
+          " lock",
+          " cloud",
+          " sandwich",
+          " river"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -6.050224304199219,
+          -6.84702205657959,
+          -10.652637481689453,
+          -9.051212310791016
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          8,
+          8,
+          8,
+          8
+        ],
+        "margin": 0.7967977523803711
+      },
+      {
+        "prompt": "A tired person often needs",
+        "choices": [
+          " sleep",
+          " paint",
+          " sand",
+          " smoke"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -5.9630584716796875,
+          -15.007705688476562,
+          -11.55903434753418,
+          -10.420763969421387
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          5,
+          5,
+          5,
+          5
+        ],
+        "margin": 4.457705497741699
+      },
+      {
+        "prompt": "A sharp knife can be used to",
+        "choices": [
+          " cut",
+          " listen",
+          " count",
+          " float"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -2.9479453563690186,
+          -9.983582496643066,
+          -9.53462028503418,
+          -9.140454292297363
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          7,
+          7,
+          7,
+          7
+        ],
+        "margin": 6.192508935928345
+      },
+      {
+        "prompt": "A dry plant often needs",
+        "choices": [
+          " water",
+          " metal",
+          " paper",
+          " glass"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -5.261422634124756,
+          -10.88309383392334,
+          -10.184101104736328,
+          -10.87402629852295
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          5,
+          5,
+          5,
+          5
+        ],
+        "margin": 4.922678470611572
+      },
+      {
+        "prompt": "If you drop a ball, gravity makes it",
+        "choices": [
+          " fall",
+          " glow",
+          " read",
+          " disappear"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -7.870737075805664,
+          -9.513315200805664,
+          -12.882182121276855,
+          -9.464481353759766
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          9,
+          9,
+          9,
+          9
+        ],
+        "margin": 1.5937442779541016
+      },
+      {
+        "prompt": "Before crossing a busy road, a careful person should",
+        "choices": [
+          " look",
+          " sleep",
+          " shout",
+          " dance"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -5.053504943847656,
+          -7.933403015136719,
+          -10.524813652038574,
+          -8.01465892791748
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          10,
+          10,
+          10,
+          10
+        ],
+        "margin": 2.8798980712890625
+      },
+      {
+        "prompt": "If food is too hot to eat, you can wait for it to",
+        "choices": [
+          " cool",
+          " grow",
+          " harden",
+          " vanish"
+        ],
+        "answer": 0,
+        "prediction": 1,
+        "scores": [
+          -4.182568073272705,
+          -4.019588947296143,
+          -8.876702308654785,
+          -11.625348091125488
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          14,
+          14,
+          14,
+          14
+        ],
+        "margin": -0.1629791259765625
+      }
+    ]
+  },
+  "arithmetic": {
+    "accuracy": 0.3,
+    "correct": 3,
+    "total": 10,
+    "mean_margin": 0.5247295379638672,
+    "boundary_changes": 0,
+    "details": [
+      {
+        "prompt": "Two plus two equals",
+        "choices": [
+          " four",
+          " five",
+          " six",
+          " seven"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -6.194631099700928,
+          -6.338435649871826,
+          -6.624600410461426,
+          -7.908621311187744
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          4,
+          4,
+          4,
+          4
+        ],
+        "margin": 0.14380455017089844
+      },
+      {
+        "prompt": "Five minus two equals",
+        "choices": [
+          " three",
+          " two",
+          " four",
+          " eight"
+        ],
+        "answer": 0,
+        "prediction": 1,
+        "scores": [
+          -5.703505992889404,
+          -5.493584632873535,
+          -6.025634765625,
+          -7.117217540740967
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          4,
+          4,
+          4,
+          4
+        ],
+        "margin": -0.20992136001586914
+      },
+      {
+        "prompt": "Three times three equals",
+        "choices": [
+          " nine",
+          " six",
+          " twelve",
+          " five"
+        ],
+        "answer": 0,
+        "prediction": 3,
+        "scores": [
+          -7.355985641479492,
+          -5.753541946411133,
+          -8.268826484680176,
+          -5.475312232971191
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          4,
+          4,
+          4,
+          4
+        ],
+        "margin": -1.8806734085083008
+      },
+      {
+        "prompt": "Half of ten is",
+        "choices": [
+          " five",
+          " ten",
+          " two",
+          " twenty"
+        ],
+        "answer": 0,
+        "prediction": 2,
+        "scores": [
+          -7.424577713012695,
+          -6.951433181762695,
+          -6.849459648132324,
+          -8.123275756835938
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          4,
+          4,
+          4,
+          4
+        ],
+        "margin": -0.5751180648803711
+      },
+      {
+        "prompt": "The next number after 2, 4, 6 is",
+        "choices": [
+          " 8",
+          " 7",
+          " 9",
+          " 10"
+        ],
+        "answer": 0,
+        "prediction": 3,
+        "scores": [
+          -2.7265663146972656,
+          -2.6509475708007812,
+          -2.735496997833252,
+          -1.6716938018798828
+        ],
+        "candidate_token_counts": [
+          2,
+          2,
+          2,
+          3
+        ],
+        "common_prefix_tokens": [
+          13,
+          13,
+          13,
+          13
+        ],
+        "margin": -1.0548725128173828
+      },
+      {
+        "prompt": "One dozen means",
+        "choices": [
+          " twelve",
+          " ten",
+          " twenty",
+          " five"
+        ],
+        "answer": 0,
+        "prediction": 3,
+        "scores": [
+          -11.126819610595703,
+          -9.425398826599121,
+          -9.570027351379395,
+          -8.611720085144043
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          3,
+          3,
+          3,
+          3
+        ],
+        "margin": -2.51509952545166
+      },
+      {
+        "prompt": "A triangle has",
+        "choices": [
+          " three sides",
+          " four sides",
+          " five sides",
+          " six sides"
+        ],
+        "answer": 0,
+        "prediction": 1,
+        "scores": [
+          -4.435563087463379,
+          -4.3860273361206055,
+          -5.327049255371094,
+          -5.4996538162231445
+        ],
+        "candidate_token_counts": [
+          2,
+          2,
+          2,
+          2
+        ],
+        "common_prefix_tokens": [
+          3,
+          3,
+          3,
+          3
+        ],
+        "margin": -0.04953575134277344
+      },
+      {
+        "prompt": "Ten is greater than seven, so the statement is",
+        "choices": [
+          " true",
+          " false",
+          " unknown",
+          " impossible"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -4.077320098876953,
+          -6.439059257507324,
+          -8.370728492736816,
+          -6.928964614868164
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          10,
+          10,
+          10,
+          10
+        ],
+        "margin": 2.361739158630371
+      },
+      {
+        "prompt": "If all cats are animals and Mia is a cat, then Mia is an",
+        "choices": [
+          " animal",
+          " planet",
+          " number",
+          " building"
+        ],
+        "answer": 0,
+        "prediction": 0,
+        "scores": [
+          -1.401810646057129,
+          -12.107503890991211,
+          -14.251163482666016,
+          -13.633312225341797
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          15,
+          15,
+          15,
+          15
+        ],
+        "margin": 10.705693244934082
+      },
+      {
+        "prompt": "The opposite truth value of true is",
+        "choices": [
+          " false",
+          " large",
+          " equal",
+          " round"
+        ],
+        "answer": 0,
+        "prediction": 2,
+        "scores": [
+          -7.573807239532471,
+          -11.234375,
+          -5.895086288452148,
+          -13.148456573486328
+        ],
+        "candidate_token_counts": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "common_prefix_tokens": [
+          7,
+          7,
+          7,
+          7
+        ],
+        "margin": -1.6787209510803223
+      }
+    ]
+  },
+  "generation": {
+    "mean_unique_token_ratio": 0.5208333333333334,
+    "mean_adjacent_repeat_rate": 0.0,
+    "mean_repeat_bigram_fraction": 0.37681159420289856,
+    "mean_repeat_trigram_fraction": 0.3181818181818182,
+    "mean_tokens_per_second": 189.66734472706824,
+    "mean_top1_probability": 0.34429207016041297,
+    "samples": [
+      {
+        "prompt": "The capital of France is",
+        "text": " the capital of France.\nThe capital of France is the capital of France.\nThe capital of France is the capital",
+        "tokens": [
+          260,
+          3575,
+          282,
+          4649,
+          30,
+          198,
+          504,
+          3575,
+          282,
+          4649,
+          314,
+          260,
+          3575,
+          282,
+          4649,
+          30,
+          198,
+          504,
+          3575,
+          282,
+          4649,
+          314,
+          260,
+          3575
+        ],
+        "generated_tokens": 24,
+        "tokens_per_second": 163.64161727346055,
+        "unique_token_ratio": 0.3333333333333333,
+        "adjacent_repeat_rate": 0.0,
+        "repeat_bigram_fraction": 0.6086956521739131,
+        "repeat_trigram_fraction": 0.5454545454545454,
+        "mean_top1_probability": 0.5115164127200842
+      },
+      {
+        "prompt": "Once upon a time, a small robot",
+        "text": " will be able to perform a task.\nThe robot will be able to perform a task by performing a task by performing",
+        "tokens": [
+          523,
+          325,
+          1730,
+          288,
+          1477,
+          253,
+          3856,
+          30,
+          198,
+          504,
+          8085,
+          523,
+          325,
+          1730,
+          288,
+          1477,
+          253,
+          3856,
+          411,
+          7691,
+          253,
+          3856,
+          411,
+          7691
+        ],
+        "generated_tokens": 24,
+        "tokens_per_second": 207.43428576811323,
+        "unique_token_ratio": 0.5416666666666666,
+        "adjacent_repeat_rate": 0.0,
+        "repeat_bigram_fraction": 0.391304347826087,
+        "repeat_trigram_fraction": 0.3181818181818182,
+        "mean_top1_probability": 0.32638960719729465
+      },
+      {
+        "prompt": "To make a cup of tea,",
+        "text": " it is a good idea to take a cup of tea.\n- If you have a cup of tea, you will",
+        "tokens": [
+          357,
+          314,
+          253,
+          1123,
+          2359,
+          288,
+          1188,
+          253,
+          7118,
+          282,
+          7188,
+          30,
+          198,
+          29,
+          1094,
+          346,
+          457,
+          253,
+          7118,
+          282,
+          7188,
+          28,
+          346,
+          523
+        ],
+        "generated_tokens": 24,
+        "tokens_per_second": 184.61283979802738,
+        "unique_token_ratio": 0.75,
+        "adjacent_repeat_rate": 0.0,
+        "repeat_bigram_fraction": 0.13043478260869565,
+        "repeat_trigram_fraction": 0.09090909090909091,
+        "mean_top1_probability": 0.31905543416117627
+      },
+      {
+        "prompt": "Scientists discovered that the new material",
+        "text": " was not the only thing that could be done by the new material.\nThe new material was not the only thing that",
+        "tokens": [
+          436,
+          441,
+          260,
+          805,
+          2775,
+          338,
+          856,
+          325,
+          2294,
+          411,
+          260,
+          725,
+          1376,
+          30,
+          198,
+          504,
+          725,
+          1376,
+          436,
+          441,
+          260,
+          805,
+          2775,
+          338
+        ],
+        "generated_tokens": 24,
+        "tokens_per_second": 216.45501484911765,
+        "unique_token_ratio": 0.625,
+        "adjacent_repeat_rate": 0.0,
+        "repeat_bigram_fraction": 0.2608695652173913,
+        "repeat_trigram_fraction": 0.18181818181818182,
+        "mean_top1_probability": 0.2508892530264954
+      },
+      {
+        "prompt": "Alice went to the market because",
+        "text": " he was a man who was a man who was a man who was a man who was a man who was a man",
+        "tokens": [
+          384,
+          436,
+          253,
+          555,
+          617,
+          436,
+          253,
+          555,
+          617,
+          436,
+          253,
+          555,
+          617,
+          436,
+          253,
+          555,
+          617,
+          436,
+          253,
+          555,
+          617,
+          436,
+          253,
+          555
+        ],
+        "generated_tokens": 24,
+        "tokens_per_second": 209.9592104374326,
+        "unique_token_ratio": 0.20833333333333334,
+        "adjacent_repeat_rate": 0.0,
+        "repeat_bigram_fraction": 0.782608695652174,
+        "repeat_trigram_fraction": 0.7727272727272727,
+        "mean_top1_probability": 0.4280534239175419
+      },
+      {
+        "prompt": "The rain stopped, so the children",
+        "text": " were not allowed to leave the rain.\nThe rain was not the only time for the rain to be seen.\n",
+        "tokens": [
+          592,
+          441,
+          3917,
+          288,
+          3934,
+          260,
+          5249,
+          30,
+          198,
+          504,
+          5249,
+          436,
+          441,
+          260,
+          805,
+          655,
+          327,
+          260,
+          5249,
+          288,
+          325,
+          2269,
+          30,
+          198
+        ],
+        "generated_tokens": 24,
+        "tokens_per_second": 155.90110023625806,
+        "unique_token_ratio": 0.6666666666666666,
+        "adjacent_repeat_rate": 0.0,
+        "repeat_bigram_fraction": 0.08695652173913043,
+        "repeat_trigram_fraction": 0.0,
+        "mean_top1_probability": 0.22984828993988535
+      }
+    ]
+  },
+  "depth_fractions": [
+    0.6227545142173767,
+    0.326347291469574,
+    0.05089820176362991
+  ],
+  "seconds": 2.020500898361206
+}

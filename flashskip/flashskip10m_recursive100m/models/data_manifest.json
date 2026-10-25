@@ -1,0 +1,20 @@
+{
+  "documents_consumed": 104960,
+  "dtype": "uint16",
+  "eos_token_id": 0,
+  "prepared_seconds": 344.14471411705017,
+  "seed": 20260830,
+  "shuffle_buffer_documents": 5000,
+  "source": {
+    "config": "sample-10BT",
+    "repo": "HuggingFaceFW/fineweb-edu"
+  },
+  "tokenizer": "HuggingFaceTB/SmolLM2-135M",
+  "tokenizer_vocab": 49152,
+  "train_path": "/content/flashskip10mrec100m/data/train_tokens.uint16",
+  "train_sha256": "2831744f4c68c5f2db2b1b87eebd130472cf19ecd5ac7b93f409113a8078033b",
+  "train_tokens": 110000000,
+  "val_path": "/content/flashskip10mrec100m/data/val_tokens.uint16",
+  "val_sha256": "e04d5c522333ca12aa64e9ac89a3c69319d07cc6bc3f88429a59b9b163e9dabe",
+  "val_tokens": 1000000
+}

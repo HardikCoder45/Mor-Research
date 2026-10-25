@@ -1,0 +1,11 @@
+{
+  "documents": 201000,
+  "elapsed_seconds": 662.0229623317719,
+  "event": "prepare",
+  "target_train_tokens": 210000000,
+  "target_val_tokens": 1000000,
+  "tokens_per_second": 318023.65775718924,
+  "train_tokens": 209538964,
+  "updated_at": 1788285162.3831785,
+  "val_tokens": 1000000
+}

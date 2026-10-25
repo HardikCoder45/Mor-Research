@@ -1,0 +1,52 @@
+{
+  "checkpoint_tokens": 500006912,
+  "action": "continue",
+  "reviewed_at": 1792744180.125419,
+  "next_nominal_target": 600000000,
+  "reasons": [
+    "Remote COMPLETE; checkpoint SHA-256 hashes, optimizer-step/data cursor and label count verified.",
+    "Validation PPL improves 77.30 -> 74.09 and diagnostic prose PPL improves 146.00 -> 137.72. This does not establish improved factual accuracy.",
+    "Equal-category diagnostic accuracy regresses 74% -> 69.67%: one grammar and two commonsense items worsen versus 400M. Facts remain 41.67%, below 200M reference 58.33%; arithmetic stays 50%.",
+    "Investigated regression by forcing one/two/three cycles: grammar stays 90% and commonsense stays 75% at all forced depths; routing override does not recover those errors. Forced depths also alter output probability weighting, so this is only a diagnostic intervention.",
+    "No global router collapse: training routes average 50.04%/31.10%/18.86%, prose diagnostic routes 55.39%/28.44%/16.17%. All 611 logged training rows finite.",
+    "Repetition worsens from 28.03% to 31.06%. Keep 200M/400M behavioral references; do not promote 500M as universally better.",
+    "Continue one unchanged 100M segment because validation and prose improve materially, no numerical failure or consecutive validation plateau occurred, and routing intervention provides no basis for a setting change. At 600M reconsider persistent behavior regression. Total cap remains nominal 700M."
+  ],
+  "comparisons": {
+    "val_loss_previous": 4.34770068526268,
+    "val_loss_now": 4.305272191762924,
+    "val_ppl_previous": 77.30052020518758,
+    "val_ppl_now": 74.08937922726327,
+    "heldout_ppl_previous": 146.00343444646938,
+    "heldout_ppl_now": 137.71888033586652,
+    "category_mean_baseline": 0.74,
+    "category_mean_previous": 0.74,
+    "category_mean_now": 0.6966666666666667,
+    "category_accuracy_now": {
+      "grammar": 0.9,
+      "cloze": 0.9166666666666666,
+      "facts": 0.4166666666666667,
+      "commonsense": 0.75,
+      "arithmetic": 0.5
+    },
+    "repeated_trigrams_previous": 0.2803030303030303,
+    "repeated_trigrams_now": 0.3106060606060606,
+    "mean_training_routes": [
+      0.5004088156742277,
+      0.31101387885510434,
+      0.18857730547066795
+    ],
+    "prose_routes": [
+      0.553892195224762,
+      0.284431129693985,
+      0.16167664527893066
+    ],
+    "effective_tokens_per_second": 43729.273527651945,
+    "median_step_tokens_per_second": 44589.823914382585,
+    "peak_cuda_GiB": 6.162531852722168
+  },
+  "training_changes": null,
+  "behavior_watch": true,
+  "evaluation_report": "/Users/hardikarora/Desktop/MAIN/research/mor10m/run/reviews/eval_500000000.json",
+  "ablation_report": "/Users/hardikarora/Desktop/MAIN/research/mor10m/run/reviews/routing_ablation_500m.json"
+}

@@ -1,0 +1,8 @@
+# Local FlashSkip inference dashboard dependencies.
+# Use Python 3.12 on macOS for broad PyTorch/Transformers wheel compatibility.
+fastapi>=0.115,<1
+numpy>=1.26,<3
+safetensors>=0.4,<1
+torch>=2.5,<3
+transformers>=4.45,<6
+uvicorn>=0.30,<1

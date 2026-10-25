@@ -1,0 +1,17 @@
+{
+  "code_file": "kaggle_train_recursive_1b_run.py",
+  "competition_sources": [],
+  "dataset_sources": [
+    "hardikarora83i2492/flashskip-10m-recursive-1b-checkpoint"
+  ],
+  "enable_gpu": true,
+  "enable_internet": true,
+  "id": "hardikarora83i2492/flashskip-10m-recursive-1b-new-tokens-p100",
+  "is_private": true,
+  "kernel_sources": [],
+  "kernel_type": "script",
+  "language": "python",
+  "machine_shape": "NvidiaTeslaP100",
+  "model_sources": [],
+  "title": "FlashSkip 10M Recursive - 1B New Tokens - P100"
+}

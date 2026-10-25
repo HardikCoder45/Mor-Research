@@ -1,0 +1,78 @@
+{
+  "pid": 40890,
+  "started_at": 1792511094.8192298,
+  "phase": "completed",
+  "error": null,
+  "updated_at": 1792778104.484713,
+  "dashboard_pid": 9962,
+  "source_published": true,
+  "source_fingerprint": "576102901ab01a9efff7439658e0d8e85e1872a0e0fe520c74126b5f28fa6d85",
+  "prep_submitted": true,
+  "gpu_hours_remaining": 27.15,
+  "quota_refresh": "2026-10-24T00:00:00",
+  "smoke_submitted": true,
+  "kernel_status": "Target 700,000,000 reached; checkpoints downloaded and verified",
+  "benchmark_tokens_per_second": 44627.31049054278,
+  "estimated_training_hours": 6.224389834933996,
+  "submitted_target": 700000000,
+  "tokens": 700022784,
+  "latest_checkpoint": "/Users/hardikarora/Desktop/MAIN/research/mor10m/run/downloads/700000000/result/checkpoints/checkpoint_0700022784",
+  "published_resume_tokens": 600014848,
+  "final_target": 700000000,
+  "additional_labels_requested": 500000000,
+  "require_review": true,
+  "accelerator": "NvidiaTeslaT4",
+  "review_target": 700000000,
+  "review_checkpoint": "/Users/hardikarora/Desktop/MAIN/research/mor10m/run/downloads/700000000/result/checkpoints/checkpoint_0700022784",
+  "review_decision": {
+    "checkpoint_tokens": 700022784,
+    "action": "continue",
+    "final_review": true,
+    "completion_only": true,
+    "reviewed_at": 1792778086.320491,
+    "reasons": [
+      "All five newly trained checkpoints and their complete FP32 optimizer/scaler/RNG/cursor files reverified by SHA-256. Sequential label/cursor counts match.",
+      "Requested continuation completed: 500,006,912 new labels, from 200,015,872 to 700,022,784 total, with nominal boundaries rounded to whole optimizer steps.",
+      "Final validation PPL 70.48 and prose diagnostic PPL 129.53 are the best among these checkpoints.",
+      "Mean diagnostic accuracy is 72%, below 74% at 200M and 400M; factual accuracy 41.7% remains below the 58.3% baseline. Greedy generation remains repetitive. No 1B-level capability demonstrated.",
+      "All 3,055 logged training rows across successful continuation segments are finite. Final mean training routes 45.53%/32.91%/21.56%; no global router collapse.",
+      "Action continue releases the existing final gate into completed state only. The supervisor loop cap is nominal 700M; no further GPU submission or training is approved."
+    ],
+    "comparisons": {
+      "val_ppl_baseline": 88.14896218920491,
+      "val_ppl_previous": 72.00618978043579,
+      "val_ppl_final": 70.4830038343239,
+      "heldout_ppl_baseline": 163.0485743600929,
+      "heldout_ppl_final": 129.53194562343262,
+      "category_mean_baseline": 0.74,
+      "category_mean_final": 0.72,
+      "final_category_accuracy": {
+        "grammar": 1.0,
+        "cloze": 0.8333333333333334,
+        "facts": 0.4166666666666667,
+        "commonsense": 0.75,
+        "arithmetic": 0.6
+      },
+      "repeat_trigrams_baseline": 0.2424242424242424,
+      "repeat_trigrams_final": 0.2878787878787879,
+      "final_segment": {
+        "target": 700000000,
+        "effective_tokens_per_second": 38782.01120070152,
+        "median_step_tokens_per_second": 42282.4293293847,
+        "peak_cuda_GiB": 6.17684268951416,
+        "mean_routes": [
+          0.4553248628656915,
+          0.3291154477483122,
+          0.21555968938599632
+        ]
+      }
+    },
+    "best_language_model_checkpoint": "/Users/hardikarora/Desktop/MAIN/research/mor10m/run/downloads/700000000/result/checkpoints/checkpoint_0700022784",
+    "best_diagnostic_mean_checkpoints": [
+      "/Users/hardikarora/Desktop/MAIN/research/mor10m/run/recovered_latest/result/checkpoints/checkpoint_0200015872",
+      "/Users/hardikarora/Desktop/MAIN/research/mor10m/run/downloads/400000000/result/checkpoints/checkpoint_0400031744"
+    ],
+    "training_changes": null
+  },
+  "final_segment_retry_count": 1
+}

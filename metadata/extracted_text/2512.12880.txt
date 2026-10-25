@@ -1,0 +1,903 @@
+
+
+===== PAGE 1 =====
+
+Improving Recursive Transformers with Mixture of LoRAs
+Mohammadmahdi Nouriborji 1 Morteza Rohanian 2 Omid Rohanian 1 3
+Abstract
+Parameter sharing in recursive transformers re-
+duces model size but collapses layer-wise expres-
+sivity. We propose Mixture of LoRAs (MoL),
+a lightweight mechanism that uses low-rank ex-
+perts to simulate a Mixture-of-Experts layer. By
+replacing feed-forward networks (FFNs) in the
+shared transformer with these conditional mod-
+ules, we effectively restore the expressivity lost
+due to parameter sharing. We pretrain a mod-
+ernised recursive architecture, ModernALBERT,
+integrating rotary embeddings, GeGLU, FlashAt-
+tention, and a distillation-based initialisation.
+Across GLUE, SQuAD-v2, and BEIR, Moder-
+nALBERT (50M–120M) achieves state-of-the-
+art performance among compact models and sur-
+passes larger fully parameterised baselines. We
+also propose an expert-merging procedure that
+compresses MoL into a single adapter at infer-
+ence while preserving accuracy, enabling efficient
+deployment. Our results show that conditional
+computation effectively restores the expressivity
+lost under aggressive parameter sharing in recur-
+sive transformers. 1
+1. Introduction
+Large language models (LLMs) power modern NLP and
+deliver strong reasoning, understanding, and generation per-
+formance. Their large parameter counts and high memory
+use, however, make training, fine-tuning, and downstream
+adaptation computationally expensive (Vaswani et al., 2017;
+Brown et al., 2020; Sanh et al., 2020).
+Parameter sharing reduces the memory footprint of trans-
+former models by applying the same weights across layers
+1NLPIE Research, UK 2University of Zurich, Switzer-
+land 3Department of Engineering Science, University
+of Oxford, UK. Correspondence to: Mohammadmahdi
+Nouriborji <m.nouriborji@nlpie.com>, Omid Rohanian
+<omid.rohanian@nlpie.com>.
+Preprint.
+1Our models are available at https://
+huggingface.co/collections/nlpie/
+modern-recursive-transformers
+Figure 1. Structure of the Mixture of LoRAs (MoL) layer. Each
+MoL layer combines a shared feed-forward network (FFN) with
+several LoRA experts, allowing conditional computation without
+significantly increasing parameters.
+instead of learning distinct parameters. ALBERT demon-
+strates this approach by using extensive cross-layer sharing
+to build compact yet strong language models (Lan et al.,
+2019). Analyses show, however, that matching the perfor-
+mance of fully parameterised transformers can force the
+shared layer to grow wider, increasing its hidden dimension
+and computational cost (Lan et al., 2019). This trade-off
+undermines efficiency and motivates approaches that pre-
+serve expressivity while minimising both parameters and
+computation.
+Recent advances in large-scale models show the effective-
+ness of Mixture-of-Experts (MoE) architectures in enhanc-
+ing transformer expressivity. By activating a subset of spe-
+1
+arXiv:2512.12880v2  [cs.LG]  17 Dec 2025
+
+===== PAGE 2 =====
+
+Improving Recursive Transformers with Mixture of LoRAs
+cialised expert modules for each input, MoE models signifi-
+cantly expand a transformer’s representational capacity and
+deliver strong performance across diverse tasks (Shazeer
+et al., 2017; Fedus et al., 2021; Lepikhin et al., 2020). De-
+spite this success, MoE architectures introduce substantial
+parameter growth, making direct application to shared or
+lightweight architectures incompatible with the goal of pa-
+rameter efficiency.
+Existing approaches attempt to mitigate the expressivity loss
+caused by parameter sharing in three main ways. (i) Static
+adapters (e.g., bottleneck adapters or LoRAs) add depth-
+specific parameters but do not adapt at the token level and do
+not modify the shared FFN itself. (ii) Mixture-of-Adapters
+(MoA) and LoRA-based MoE variants introduce dynamic
+experts after the FFN, leaving its internal transformation un-
+changed. (iii) Relaxed Recursive Transformers (RRT) attach
+static LoRA modules to a shared block, partially restoring
+depth-specific behaviour but lacking token-dependent rout-
+ing. Crucially, none of these designs introduce conditional
+computation inside the shared FFN during pretraining. In
+this work, we explore whether such internal modulation
+can more effectively restore the expressivity lost due to
+parameter sharing.
+To address these limitations, we introduce ModernALBERT,
+a recursive transformer that restores expressivity through
+Mixture of LoRAs (MoL), a mechanism for conditional
+computation within the shared architecture. We replace
+select FFNs in the shared transformer with MoL modules,
+embedding a small pool of LoRA experts directly into the
+network. By routing tokens to a sparse subset of these
+experts, MoL allows the shared backbone to exhibit distinct
+behaviours for different inputs. This approach reestablishes
+the layer-wise functional diversity that parameter sharing
+typically eliminates, all while preserving strict parameter
+efficiency (Hu et al., 2021).
+We integrate several modern architectural components that
+improve training stability and runtime efficiency: gated
+GELU-style feed-forward networks (e.g., GeGLU) (Shazeer,
+2020), rotary position embeddings (RoPE; Su et al., 2021),
+and I/O-aware attention implementations such as FlashAt-
+tention (Dao et al., 2022). Empirical results demonstrate
+that ModernALBERT achieves state-of-the-art performance
+among compact transformer models, outperforming prior
+baselines on GLUE (Wang et al., 2019), SQuAD (Rajpurkar
+et al., 2018), and BEIR (Thakur et al., 2021) benchmarks.
+Our key contributions include:
+• We introduce Mixture of LoRAs (MoL), a conditional-
+computation layer that integrates low-rank experts into
+a shared FFN, restoring expressivity in recursive trans-
+formers.
+• We build ModernALBERT, a family of compact recur-
+sive models that integrate RoPE, GeGLU, and FlashAt-
+tention, and we release all code and training check-
+points.
+• We provide model variants ranging from 50M to
+120M parameters and evaluate them extensively across
+GLUE (Wang et al., 2019), SQuAD (Rajpurkar et al.,
+2018), and BEIR (Thakur et al., 2021).
+• We show that MoL consistently improves performance
+over mixture-of-adapters and relaxed recursive trans-
+formers in controlled ablations, and we introduce a
+merging strategy that compresses experts into a single
+adapter for efficient deployment.
+2. Related Works
+Parameter-efficient language models were significantly ad-
+vanced by ALBERT, which introduced factorised embed-
+ding parameterisation and aggressive cross-layer parameter
+sharing to dramatically reduce the memory footprint com-
+pared to models like BERT (Lan et al., 2019). However, this
+strict static parameter tying, while efficient, introduces a
+trade-off by limiting overall expressivity and capacity. Early
+recursive architectures, such as the Universal Transformer
+(Dehghani et al., 2018), also explored layer tying, but noted
+that matching the performance of fully parameterised mod-
+els often required wider layers, increasing computational
+cost. This highlights a central challenge: static parame-
+ter sharing saves memory, but can create a performance
+bottleneck.
+A parallel and orthogonal approach to scaling models effi-
+ciently is MoE (Shazeer et al., 2017; Lepikhin et al., 2020;
+Fedus et al., 2021). MoE models, such as the Switch Trans-
+former, increase model capacity without a proportional rise
+in computation by routing each token to a sparse subset of
+experts. Conditional computation has also been adapted for
+parameter-efficient fine-tuning (PEFT), where experts are
+often small plug-in modules such as LoRA adapters (Hu
+et al., 2021; Houlsby et al., 2019). Mixture-of-Adapters
+approaches (e.g., MoLE, MixLoRA, AdaMix, Adapter Fu-
+sion) have proven effective for multi-task fine-tuning (Wu
+et al., 2024; Li et al., 2024; Mehrish et al., 2023; Pfeiffer
+et al., 2020; Feng et al., 2024). However, these frameworks
+are predominantly designed to be applied on top of existing
+models, rather than being integral to the base architecture
+during pretraining.
+Beyond modularity, modern architectural improvements
+have shown measurable gains in both efficiency and perfor-
+mance. Enhancements such as rotary positional embeddings,
+gated feed-forward networks, and I/O-optimised attention
+implementations reduce training overhead while improving
+model quality. ModernBERT demonstrates that these de-
+sign choices can yield substantial performance gains over
+2
+
+===== PAGE 3 =====
+
+Improving Recursive Transformers with Mixture of LoRAs
+Figure 2. Comparison of parameter-sharing and adapter architectures. ALBERT shares a single self-attention and FFN block across all
+layers without adaptation. RRT augments the shared block with depth-specific static LoRA adapters. MoA keeps the shared backbone
+fixed and uses a router to select adapters applied after the FFN output. In contrast, MoL (ours) routes among a pool of LoRA experts
+whose low-rank updates are injected directly into the shared FFN weights, enabling token-conditional modulation while preserving
+parameter sharing in the backbone.
+standard transformer baselines without increasing computa-
+tional cost (Warner et al., 2024).
+Recent work has explored the combination of parameter
+sharing with lightweight, layer-specific modules. Relaxed
+Recursive Transformers introduce static LoRA modules into
+a recursive shared block, demonstrating that depth-specific
+adapters can partially recover performance lost due to strict
+parameter sharing (Bae et al., 2024). Similarly, MiniAL-
+BERT employs bottleneck adapters to enhance the expres-
+sivity of shared backbones, showing that compact trans-
+formers can achieve strong performance when combined
+with targeted, low-cost modules (Nouriborji et al., 2023).
+While these approaches effectively augment parameter-
+shared models, integrating dynamic conditional computa-
+tion into a compact backbone remains an open direction.
+ModernALBERT addresses this limitation by introducing
+an architecture that combines the parameter efficiency of
+ALBERT-style recursive sharing with the adaptive expres-
+sivity of token-conditional expert modulation.
+3. ModernALBERT
+ModernALBERTis a compact transformer architecture
+that combines recursive parameter sharing with lightweight,
+parameter-efficient modules to enhance representational ca-
+pacity. We outline how recursive weight sharing reduces
+model size while preserving effective depth, then introduce
+theMixture of LoRAs (MoL), which injects flexibility
+into shared layers through MoE-style low-rank experts. We
+also describe several auxiliary techniques that further sta-
+bilise training and improve performance across model sizes:
+knowledge distillation, improved initialisation, and architec-
+tural refinements.
+3.1. Parameter-Sharing through Recursions
+Fully-parameterised transformers, such as BERT, have
+demonstrated strong performance across a wide range of
+benchmarks and tasks. A standard transformer layer con-
+sists of a multi-head self-attention (MHA) module followed
+by a feed-forward network (FFN), with residual connections
+and layer normalisation (LN) applied around each sub-layer
+(Nguyen & Salazar, 2019). Mathematically, the i-th layer
+can be expressed as:
+hatt
+i =h i−1 +MHA(LN(h i−1);θ i)(1)
+hi =h att
+i +FFN(LN(h att
+i );ϕ i)(2)
+For brevity, let the output of the full layer be:
+hi = Ψ(hi−1;θ i, ϕi),(3)
+where θi and ϕi denote the parameters of the attention and
+feed-forward modules for the i-th layer, respectively. Note
+that in the fully-parameterised formulation, each layer has
+its own distinct parameters, making deep models costly and
+hard to deploy. Let the hidden dimension be d and the FFN
+expansion rate be 4; then for a transformer of depth N, the
+parameter count is approximately:
+3
+
+===== PAGE 4 =====
+
+Improving Recursive Transformers with Mixture of LoRAs
+|Θ| ≈N
+
+4d2 + 2×(4d 2)
+
+= 12N d2 (4)
+To address the high parameter cost of fully-parameterised
+transformers, parameters can be shared across multiple lay-
+ers, allowing models to maintain depth while reducing the
+number of unique parameters. In a recursive transformer
+with group size G and total depth K·G , the layers are di-
+vided into K groups, where all layers within a group share
+parameters. Denoting the shared attention and feed-forward
+parameters for group g as θ(g) and ϕ(g), the i-th layer (with
+iandgstarting from 1) can be compactly written as:
+hi = Ψ(hi−1;θ (⌈i/G⌉), ϕ(⌈i/G⌉))(5)
+In the extreme case of full parameter sharing (as in AL-
+BERT), all layers share the same parameters, i.e., θ(g) =θ
+and ϕ(g) =ϕ for all layers. More generally, in a recursive
+transformer with total depth K·G and K groups of size G,
+the total number of unique parameters is approximately
+|Θ| ≈K·(4d 2 + 8d2) = 12Kd 2 (6)
+Compared to a fully-parameterised transformer with N=
+K·G layers, the recursive transformer reduces the number
+of unique parameters by a factor ofK/N:
+|Θ|
+|Θfull| ≈ 12Kd 2
+12N d2 = K
+N = 1
+G (7)
+3.2. Improved Flexibility through Mixture of LoRAs
+We address the loss of representational capacity from weight
+sharing by integrating Mixture-of-Experts (MoE) layers, a
+mechanism that has proven highly effective in recent large
+language models. A standard MoE layer consists of a router
+and E feed-forward modules called experts (Fedus et al.,
+2021). For a given input token representation h, the router
+assigns a probability pi(h) to each expert i, and the output
+of the MoE layer is a weighted sum of the expert outputs:
+MoE(h) =
+EX
+i=1
+pi(h)·FFN i(h)(8)
+where pi(h) is the routing weight for expert i and FFNi is
+the feed-forward network corresponding to expert i. This al-
+lows different tokens to leverage different subsets of experts,
+effectively enabling conditional computation and increasing
+the model’s flexibility.
+Although MoE layers are highly effective, they come at
+the cost of significantly increasing the total number of pa-
+rameters, which goes against our goal of building compact,
+efficient models. To retain the benefits of MoE while keep-
+ing the parameter count low, we adopt LoRA modules (Hu
+et al., 2021) to mimic the behavior of a mixture of experts.
+In this setup, a shared feed-forward network is augmented
+with multiple lightweight LoRA adapters, which act as dis-
+tinct experts and enable conditional computation.
+A standard LoRA module replaces a weight matrix W∈
+Rdin×dout with a low-rank update:
+W ′ =W+ α
+r AB(9)
+where A∈R din×r and B∈R r×dout are trainable matrices
+of rank r≪d in, dout, drastically reducing the number of
+additional parameters.
+Building on this idea, we define a shared feed-forward
+network FFNshared with parameters θ={W down, Wup},
+and augment it with E LoRA modules ψi =
+{Ai,1, Bi,1, Ai,2, Bi,2} for each expert i. Given an input
+h, the FFN modified by thei-th LoRA expert is:
+FFN(h;θ, ψ i) =
+ 
+Wup + α
+r Ai,2Bi,2
+
+σ
+ 
+Wdown + α
+r Ai,1Bi,1
+
+h
+
+(10)
+where r is the LoRA rank, α is a scaling factor, and σ is
+the activation function. Finally, the output of the Mixture
+of LoRAs (MoL) layer is computed by selecting experts via
+routing weightsp i(h):
+MoL(h) =
+EX
+i=1
+pi(h)·FFN(h;θ, ψ i)(11)
+We adopt a sparse top-2 routing strategy, selecting only the
+two experts with the highest routing weights for each token
+to further improve efficiency. Let S2(h) denote the indices
+of the top-2 experts for input h, then the sparse MoL output
+is:
+MoLtop-2(h) =
+X
+i∈S2(h)
+pi(h)·FFN(h;θ, ψ i)(12)
+where pi(h) is re-normalised over the selected top-2 experts
+to sum to 1.
+4
+
+===== PAGE 5 =====
+
+Improving Recursive Transformers with Mixture of LoRAs
+Variant Layers Groups MoL Groups Hidden Dim Intermediate Dim / Expert Dim
+Tiny 14 7 6, 7 768 1152 / 2624
+Medium 12 3 3 1024 2624 / 4096
+Base 16 4 3,4 1024 2624 / 4096
+Large 24 6 3,4,5,6 1024 2624 / 4096
+Table 1. Comparison of ModernALBERT model variants. MoL layers replace the shared FFNs at the indicated positions, each with 8
+experts and top-2 routing.
+3.3. Effects of Knowledge Distillation and Initialisations
+We found that initialising the parameters of ModernAL-
+BERT from a fully-parameterised model, in our case Mod-
+ernBERT, significantly improves performance. Following
+the initialisation technique proposed in Relaxed Recursive
+Transformers (Bae et al., 2024), we map the parameters from
+the fully-parameterised model to the shared layers of Mod-
+ernALBERT to provide a strong starting point for training.
+In addition to this, we apply knowledge distillation (Hinton
+et al., 2015; Sanh et al., 2020) from ModernBERT, using
+its predictions as soft targets to further guide the training of
+ModernALBERT. This combination of informed initialisa-
+tion and distillation is critical for data efficiency, allowing
+the model to converge rapidly despite reduced training time
+and a pre-training budget of only 30B tokens (compared to
+the 1.7T tokens used for ModernBERT).
+3.4. Training Settings
+We adopt a multi-stage pre-training curriculum to maximise
+data efficiency within our limited token budget. The training
+process is divided into two distinct phases. We first warm up
+the model on the RedPajamas-1T dataset (Computer, 2023)
+for 20,000 to 30,000 steps. Following this initialisation
+phase, we transition to the RefinedWeb dataset (Penedo
+et al., 2023) for the remainder of the training, continuing for
+an additional 70,000 to 80,000 steps.
+Throughout both stages, we maintain a fixed global batch
+size of 384 and a maximum sequence length of 1024 to-
+kens. Optimisation is performed using the AdamW opti-
+miser (Kingma & Ba, 2017). We employ a linear warmup
+schedule, peaking at a learning rate of5×10 −4 or 5×10 −5,
+followed by a linear decay. This regimen allows Moder-
+nALBERT to effectively adapt the distilled knowledge from
+the teacher model while refining the shared parameters and
+LoRA modules on high-quality web data.
+3.5. ModernALBERT Variants
+In addition to parameter-sharing and MoL, ModernALBERT
+incorporates several architectural improvements to enhance
+training stability, efficiency, and expressivity. We adopt pre-
+layer normalisation (Pre-Norm) (Nguyen & Salazar, 2019)
+and GeGLU activations (Shazeer, 2020) in the feed-forward
+networks to improve gradient flow and representation capac-
+ity. To further improve efficiency, we use rotary embeddings
+(Su et al., 2021) in the attention mechanism and FlashAt-
+tention (Dao et al., 2022) for fast and memory-efficient
+attention computation.
+The MoL layers are placed at the end of each group by
+replacing the shared FFN with a Mixture of LoRAs layer.
+Each MoL consists of 8 experts with top-2 routing, except
+the tiny model, which has 4 experts and a top-1 routing,
+enabling conditional computation and enhanced flexibility
+without significant parameter overhead.
+We design four variants of ModernALBERT (Table 1) to
+target different model scales. This design balances model
+depth, parameter efficiency, and representational flexibil-
+ity across different scales, enabling ModernALBERT to
+achieve high performance while maintaining compactness
+and efficiency.
+4. Experimental Results
+We evaluate ModernALBERT on natural language under-
+standing, question answering, and information retrieval
+benchmarks. Our goal is to show that adding the Mixture-
+of-LoRAs (MoL) layer to a recursive, parameter-shared
+architecture provides substantial efficiency gains without
+sacrificing representational capacity. As shown in Table 2,
+ModernALBERT performs strongly across model scales.
+4.1. GLUE Benchmark Results
+We present GLUE benchmark results (Wang et al., 2019) in
+Table 2, where ModernALBERT performs strongly across
+model scales. The largest variant, ModernALBERT-large
+(120M parameters), achieves a GLUE average of88.72, sur-
+passing the fully parameterised ModernBERT-base (149M
+parameters, 88.45) and outperforming previous compact
+models such as NomicBERT and MosaicBERT. The archi-
+tectural benefits appear most clearly on tasks that require
+precise semantic matching and inference from limited data,
+where ModernALBERT-large achieves state-of-the-art re-
+sults among base-class models onRTE (88.44),STS-B
+(92.1), andMRPC (92.7).
+For smaller datasets like CoLA and RTE, we further stabilise
+5
+
+===== PAGE 6 =====
+
+Improving Recursive Transformers with Mixture of LoRAs
+Model Params Seq. Single Sentence Paraphrase and Similarity Natural Language InferenceA vg
+CoLA SST-2 MRPC STS-B QQP MNLI QNLI RTE
+BERT (Devlin et al., 2019) 110M 512 59.0 93.1 89.5 89.4 91.4 85.4 91.6 78.2 84.84
+RoBERTa (Liu et al., 2019) 125M 512 63.6 94.8 90.2 91.2 91.9 87.6 92.8 78.7 86.35
+DeBERTav3 (He et al., 2023a) 183M 51269.295.6 89.5 91.692.4 90.0 94.083.8 88.26
+MosaicBERT-128 (Portes et al., 2024) 137M 128 58.2 93.5 89.0 90.3 92.0 85.6 91.4 83.0 85.38
+NomicBERT-2048 (Nussbaum et al., 2025) 137M 2048 50.0 93.0 88.0 90.0 92.0 86.0 92.0 82.0 84.13
+GTE-en-MLM (Li et al., 2023) 137M 8192 57.0 93.4 92.1 90.2 88.8 86.7 91.9 84.8 85.99
+ModernBERT (Warner et al., 2024) 149M 8192 65.196.092.2 91.8 92.1 89.1 93.9 87.4 88.45
+ModernALBERT-tiny 50M 1024 58.4 93.0 90.2 90.4 90.5 84.6 91.3 81.2 84.95
+ModernALBERT-medium 55M 1024 62.3 94.0 91.0 91.2 91.0 86.6 92.0 81.6 86.21
+ModernALBERT-base 75M 1024 64.6 95.2 91.7 91.8 91.5 88.2 93.0 85.6 87.7
+ModernALBERT-large 120M 1024 66.4 95.592.7 92.192.0 88.9 93.788.44 88.72
+Table 2. GLUE benchmark results for base models. Scores are reported for each task category.A vgis the unweighted average across all
+tasks.
+Model F1 (%) Exact (%)
+BERT-base 88.6 80.6
+RoBERTa-base 91.7 84.7
+ALBERT-xxlarge 92.5 84.5
+ModernBERT-base 92.6 85.2
+Ours
+ModernALBERT-tiny 90.0 82.9
+ModernALBERT-medium 90.4 82.9
+ModernALBERT-base 92.886.1
+ModernALBERT-large92.985.9
+Table 3.Results on the SQuAD-v2 Benchmark.
+training by pre-training the router on MNLI and freezing its
+parameters. This allows the model to exploit a more robust,
+generalised routing policy, though we find the degree of im-
+provement varies depending on the specific downstream ob-
+jective. These optimisations preserve general capacity, keep-
+ing ModernALBERT competitive on high-resource tasks.
+On tasks such as MNLI, QNLI, and SST-2, it rivals substan-
+tially larger baselines, achieving parity with ModernBERT
+on QNLI (93.7) and MNLI (88.9). These results confirm
+that ModernALBERT successfully combines the efficiency
+of conditional computation with the robustness of fully pa-
+rameterised transformers.
+Question Answering PerformanceWe evaluate ex-
+tractive question answering capabilities on SQuAD-
+v2 (Rajpurkar et al., 2018), as reported in Table 3.
+ModernALBERT-base achieves an F1 score of 92.8, outper-
+forming the larger ModernBERT-base (92.6) and ALBERT-
+xxlarge (92.5). These results indicate that the Mixture-of-
+LoRAs approach transfers well to token-level classification
+tasks. ModernALBERT also reaches an Exact Match score
+of 86.1, showing that the model can localise answer spans
+accurately despite heavy parameter sharing.
+Information Retrieval ResultsPerformance on the BEIR
+information retrieval benchmark (Thakur et al., 2021) is
+detailed in Table 4. ModernALBERT shows strong do-
+main generalisation, achieving the best average performance
+among compact models on tasks such as TREC-COVID,
+FiQA, and ArguAna. Specifically, on ArguAna (argument
+retrieval), ModernALBERT scores 48.82, outperforming
+ModernBERT (35.7). This indicates that our routing mech-
+anism allows the model to adapt effectively to specialised
+domains and shifting distributions, a capability often lacking
+in static recursive transformers.
+4.2. Ablation Studies
+To isolate the contributions of our architectural choices,
+we conducted ablation studies comparing the MoL design
+against alternative conditional computation strategies and
+initialisation methods. A comparative analysis reveals that
+the proposed MoL design consistently outperforms the
+Mixture-of-Adapters (MoA) approach. In the MoA configu-
+ration, a set ofn adapters and a router are placed sequentially
+afterthe feed-forward network, whereas our MoL design
+integrates LoRA experts directly into the weight space of
+the shared FFN. As shown in Table 5, with 8 experts and
+top-2 routing, MoL achieves a GLUE average of 77.24, com-
+pared to 76.87 for the equivalent MoA configuration. This
+performance gap suggests that modifying the internal repre-
+sentations of the shared FFN via LoRA facilitates a deeper
+and more effective integration of conditional computation
+than merely appending adaptive layers to the block output.
+Table 5 further illustrates the impact of scaling the expert
+count. Increasing the capacity from a single LoRA expert
+(Average: 76.08) to 8 experts with top-2 routing results in
+a clear performance gain of 1.16 points. This trend con-
+firms that the observed improvements are driven by the
+conditional capacity inherent in the mixture model rather
+than the simple addition of trainable parameters. Finally,
+we compare our ModernALBERT model with the Relaxed
+6
+
+===== PAGE 7 =====
+
+Improving Recursive Transformers with Mixture of LoRAs
+Task BERT RoBERTa DeBERTaV3 NomicBERT GTE-en ModernBERT ModernALBERT
+NFCorpus 24.3 20.4 8.0 25.726.323.7 24.30
+SciFact 51.3 45.6 22.6 52.0 54.157.056.90
+TREC-Covid 49.5 52.2 48.4 63.0 49.7 72.172.85
+FiQA 22.8 26.1 11.5 23.5 30.1 28.830.43
+ArguAna 31.6 35.2 26.1 35.5 35.7 35.748.82
+Avg. (Subset) 38.9 37.7 20.2 41.0 41.4 41.646.66
+Table 4.Performance on selected BEIR benchmark datasets.
+Recursive Transformer (RRT) baseline using the same step-
+wise initialisation strategy proposed in RRT and training
+both models with the masked language modelling (MLM)
+objective. As shown in Table 6, ModernALBERT achieves
+a higher GLUE average (81.94 vs. 80.95), indicating that
+integrating conditional computation directly into the shared
+FFN weights yields more effective training than the relaxed
+recursive approach.
+The training configuration was kept uniform across all abla-
+tion experiments (including MoA, MoL scaling, and RRT
+comparisons), all models were trained for a consistent 30k
+steps on the Wikipedia corpus, using a batch size of128 and
+a maximum sequence length of1024.
+5. Optimising MoL for Inference
+The proposed MoL layer augments a parameter-shared recur-
+sive transformer with lightweight LoRA experts coordinated
+by a routing network. While this design captures the flexi-
+bility of Mixture-of-Experts architectures, the conditional
+routing mechanism introduces latency overhead during in-
+ference by evaluating multiple experts per token. To address
+this, we propose compressing the MoL layer into a single
+static adapter for deployment.
+5.1. Expert Merging Strategies
+To eliminate conditional branching, we synthesise a sin-
+gle dense adapter ∆merged from the pool of E experts
+{∆1, . . . ,∆E}. This aggregation is defined by a weight-
+ing vectorw∈R E:
+∆merged =
+EX
+j=1
+wj∆j.(13)
+During fine-tuning, the dynamic routing mechanism is dis-
+abled, and the model updates ∆merged directly (He et al.,
+2023b). This procedure effectively converts the sparse
+MoL layer into a standard, static LoRA module, reducing
+the inference cost to that of a dense model. As shown in
+Table 7, this approach yields substantial efficiency gains;
+ModernALBERT-tiny achieves 9.46 ms latency and 106,527
+tokens/s throughput while using only 0.196 GB of GPU
+memory.
+We investigate two strategies for managing this aggregation
+during fine-tuning.
+5.1.1. UNIFORMINITIALIZATION
+In the first strategy, we initialise the merged adapter by av-
+eraging the pre-trained experts uniformly (wj = 1/E). At
+each step, the merged adapter ∆merged is formed by averag-
+ing the experts, and the model parameters are updated via
+standard backpropagation. This method assumes a neutral
+starting point, allowing the aggregate representation to adapt
+to the downstream task without reliance on token-specific
+routing.
+5.1.2. DYNAMICEMA MERGING
+The second strategy updates the merging weightsw dynami-
+cally throughout fine-tuning based on the router’s activation
+patterns. We initialise w uniformly (wj = 1/E), allowing
+the EMA updates to gradually refine the distribution from
+a neutral starting point. Let pi,t ∈R E be the router prob-
+ability vector for token t in sample i. We first compute a
+per-sample routing vectorr i and a batch-level averager b:
+ri = 1
+Ti
+TiX
+t=1
+pi,t, r b = 1
+B
+BX
+i=1
+ri.(14)
+We then update the global merging weights w using an
+exponential moving average (EMA) of these batch statistics:
+wnew =αw old + (1−α)r b,(15)
+where α is a decay factor. Regarding the router itself, we
+adopt a task-dependent approach: for data-rich tasks like
+MNLI, the router is trained jointly to refine expert selection;
+for smaller datasets (STS-B, RTE, SST-2), the router is
+frozen to leverage pre-trained specialisation while only the
+EMA weights adapt.
+As shown in Table 8, the EMA-based strategy consistently
+outperforms uniform initialization (Vanilla). By dynam-
+ically adjusting the expert contributions based on routing
+statistics, EMA preserves nearly all of the unmerged model’s
+accuracy, with particularly strong gains on RTE (86.28 vs
+7
+
+===== PAGE 8 =====
+
+Improving Recursive Transformers with Mixture of LoRAs
+Model Params Num Experts Top-K Single Sentence Paraphrase NLI A vg
+CoLA SST-2 MRPC STS-B MNLI RTE
+ModernBERT 245M - - 34.05 88.76 88.72 88.22 81.53 75.45 76.12
+ModernALBERT (Base) 56M - - 37.39 88.76 86.76 87.40 81.14 72.92 75.73
+Mixture of Adapters (MoA) - Adapters placed after FFN
+MoA 64M 1 1 38.49 88.64 87.25 87.68 80.77 71.84 75.45
+MoA 69M 4 1 38.4990.7187.50 87.32 80.61 74.36 76.17
+MoA 75M 8 2 41.80 89.10 87.74 87.56 81.05 74.00 76.87
+Mixture of LoRAs (MoL) - Proposed Method
+MoL 73M 1 1 40.06 88.99 87.74 87.38 81.03 73.28 76.08
+MoL 74M 4 1 40.40 89.00 87.99 87.33 80.91 73.40 76.50
+MoL 75M 8 242.9790.36 88.23 88.01 81.15 74.72 77.24
+Table 5. Ablation Study: Mixture of Adapters (MoA) vs. Mixture of LoRAs (MoL). MoL consistently outperforms MoA at similar
+parameter counts.
+Model Params Single Sentence Paraphrase/Similarity Natural Language Inference A vg
+CoLA SST-2 MRPC STS-B QQP MNLI RTE QNLI
+ModernALBERT 75M45.6989.9088.72 89.60 90.86 83.74 76.17 90.82 81.94
+Relaxed Recursive Transformers 73M 40.7690.0287.99 88.99 90.86 83.25 75.09 90.66 80.95
+Table 6. Ablation on Initialisation: We use the same initialisation as Relaxed Recursive Transformers (RRT) and compare our Mixture-of-
+LoRAs (MoL) strategy with their layer-wise LoRAs on GLUE tasks.
+Model Latency (ms)↓Throughput (token/s)↑Memory (GB)↓
+ModernBERT-base 14.44 69519 0.570
+ModernBERT-large 21.30 48117 1.5
+ModernALBERT-tiny9.46 106527 0.196
+ModernALBERT-medium 9.72 106208 0.207
+ModernALBERT-base 12.71 80731 0.291
+ModernALBERT-large 18.87 54483 0.459
+Table 7.Efficiency Metrics of Different Models when Using Merged Experts.
+84.83) and SST-2. These results confirm that incorporating
+the router’s learned preferences into the merging process,
+even when the router itself is frozen, provides a superior
+adaptation mechanism compared to a static uniform initial-
+ization.
+6. Discussion
+The increase in capacity in the MoL architecture arises pri-
+marily from expert specialisation. As the router learns to
+activate different LoRA modules for different inputs, each
+module becomes responsible for modelling particular as-
+pects of the data distribution, such as syntactic cues, se-
+mantic relations, or domain-specific patterns. This division
+of responsibility yields richer internal representations and
+helps mitigate the expressivity limitations inherent to fully
+shared architectures. Although the additional experts pro-
+vide clear performance gains, dynamic routing naturally
+increases inference cost because several experts may be acti-
+vated per token (Shazeer et al., 2017; Lepikhin et al., 2020;
+Fedus et al., 2021).
+Our results on expert merging further suggest that while
+dynamic routing is crucial for training high-capacity mod-
+els, the learned expressivity can often be compressed into
+a static representation for inference. The success of the
+EMA strategy implies that the aggregate behaviour of the
+experts captures a robust policy that adapts well across gen-
+eral domains. This finding aligns with recent work on model
+merging and distillation, indicating that the computational
+cost of conditional branching is beneficial for learning but
+not always strictly necessary for maintaining performance
+during deployment. This trade-off allows MoL-based mod-
+els to occupy a unique position where they train with the
+expressivity of large MoEs but deploy with the speed and
+8
+
+===== PAGE 9 =====
+
+Improving Recursive Transformers with Mixture of LoRAs
+Method MNLI STS-B RTE SST-2
+No Merging 88.2 91.8 85.6 95.2
+Vanilla 87.9 91.5 84.83 94.8
+EMA88.0 91.7 86.28 95.1
+Table 8.Effect of Expert Merging on Different Datasets.
+footprint of compact dense models.
+7. Limitations
+While the proposed model improves parameter efficiency
+and adaptive capacity through the integration of MoL lay-
+ers, several limitations remain. First, despite the architec-
+tural optimisations and merging strategies explored in this
+work, the computational complexity of mixture-of-experts
+routing remains relatively high compared to fully shared or
+purely dense alternatives. Although our design mitigates dis-
+patching overhead through lightweight routing and optional
+merging, further advances in efficient expert selection and
+load balancing are necessary to fully realise the scalability
+benefits of conditional computation.
+Second, the model employs global attention across all tokens
+without incorporating locality-aware mechanisms. Recent
+architectures such as ModernBERT have demonstrated that
+local or block-sparse attention can substantially improve
+both efficiency and long-sequence modelling performance.
+Consequently, our approach may underperform on tasks re-
+quiring extended context retention or fine-grained reasoning
+over long inputs. Future work could address these issues
+by integrating local attention patterns or hybrid attention
+schemes within the recursive parameter-sharing framework.
+8. Conclusion and Future Work
+In this work, we explored several strategies to enhance the
+representational power of recursive transformers. Building
+upon the principle of parameter sharing, we introduced the
+Mixture-of-LoRAs (MoL) layer, a novel mechanism that in-
+tegrates conditional computation into the shared transformer
+architecture. The proposed layer demonstrated substantial
+improvements in performance while maintaining parameter
+efficiency, highlighting its effectiveness as a scalable and
+adaptable extension to recursive parameter-shared models.
+For future research, extending this framework to multimodal
+settings offers a promising direction for studying conditional
+representations across diverse input types. Moreover, ap-
+plying parameter sharing in conjunction with the proposed
+Mixture-of-LoRAs to large autoregressive language models
+could provide a path toward reducing their parameter count
+and memory footprint, while preserving or even enhancing
+their representational capacity. Such integration may enable
+the development of more efficient yet powerful large-scale
+generative models.
+Acknowledgments
+This research was supported in part by Lambda, Inc. through
+its Research Grant Program, and by a micro-grant from
+Trelis Research.
+References
+Bae, S. et al. Effective parameter sharing with layer-wise
+lora. 2024. URL https://arxiv.org/abs/2410.
+20672. introduces Relaxed Recursive Transformers /
+layer-wise LoRA (openreview/arXiv).
+Brown, T. B., Mann, B., Ryder, N., Subbiah, M., Kaplan,
+J., Dhariwal, P., Neelakantan, A., Shyam, P., Sastry, G.,
+Askell, A., Agarwal, S., Herbert-V oss, A., Krueger, G.,
+Henighan, T., Child, R., Ramesh, A., Ziegler, D. M., Wu,
+J., Winter, C., Hesse, C., Chen, M., Sigler, E., Litwin, M.,
+Gray, S., Chess, B., Clark, J., Berner, C., McCandlish,
+S., Radford, A., Sutskever, I., and Amodei, D. Lan-
+guage models are few-shot learners.Advances in Neu-
+ral Information Processing Systems (NeurIPS) / arXiv
+preprint, 2020. URL https://arxiv.org/abs/
+2005.14165.
+Computer, T. Redpajama: An open dataset for training large
+language models. InThirty-eighth Conference on Neu-
+ral Information Processing Systems Datasets and Bench-
+marks Track, 2023. URL https://github.com/
+togethercomputer/RedPajama-Data.
+Dao, T., Fu, D. Y ., Ermon, S., Rudra, A., and R ´e, C.
+Flashattention: Fast and memory-efficient exact atten-
+tion with io-awareness. InAdvances in Neural In-
+formation Processing Systems (NeurIPS), 2022. URL
+https://arxiv.org/abs/2205.14135.
+Dehghani, M., Gouws, S., Vinyals, O., Uszkoreit, J., and
+Kaiser, L. Universal transformers. 2018. URL https:
+//arxiv.org/abs/1807.03819. arXiv preprint.
+Devlin, J., Chang, M., Lee, K., and Toutanova, K. Bert: Pre-
+training of deep bidirectional transformers for language
+understanding. InProceedings of NAACL-HLT, 2019.
+URLhttps://arxiv.org/abs/1810.04805.
+Fedus, W., Zoph, B., and Shazeer, N. Switch transformers:
+Scaling to trillion-parameter models with simple and ef-
+ficient sparsity. 2021. URL https://arxiv.org/
+abs/2101.03961. arXiv / conference.
+Feng, W. et al. Mixture-of-loras: An efficient multitask
+tuning for large language models.arXiv preprint, 2024.
+URLhttps://arxiv.org/abs/2403.03432.
+9
+
+===== PAGE 10 =====
+
+Improving Recursive Transformers with Mixture of LoRAs
+He, P., Gao, J., and Chen, W. Debertav3: Improving
+deberta using electra-style pre-training with gradient-
+disentangled embedding sharing, 2023a. URL https:
+//arxiv.org/abs/2111.09543.
+He, S., Fan, R.-Z., Ding, L., Shen, L., Zhou, T., and Tao,
+D. Merging experts into one: Improving computational
+efficiency of mixture of experts, 2023b. URL https:
+//arxiv.org/abs/2310.09832.
+Hinton, G., Vinyals, O., and Dean, J. Distilling the
+knowledge in a neural network, 2015. URL https:
+//arxiv.org/abs/1503.02531.
+Houlsby, N., Giurgiu, A., Jastrzebski, S., Morrone, B.,
+de Laroussilhe, Q., Gesmundo, A., Attariyan, M., and
+Gelly, S. Parameter-efficient transfer learning for
+nlp, 2019. URL https://arxiv.org/abs/1902.
+00751.
+Hu, E. J., Shen, Y ., Wallis, P., Allen-Zhu, Z., Li, Y ., Wang,
+S., and Chen, W. Lora: Low-rank adaptation of large
+language models. 2021. URL https://arxiv.org/
+abs/2106.09685. arXiv preprint.
+Kingma, D. P. and Ba, J. Adam: A method for stochastic op-
+timization, 2017. URL https://arxiv.org/abs/
+1412.6980.
+Lan, Z., Chen, M., Goodman, S., Gimpel, K., Sharma, P.,
+and Soricut, R. Albert: A lite bert for self-supervised
+learning of language representations. 2019. URLhttps:
+//arxiv.org/abs/1909.11942. arXiv preprint.
+Lepikhin, D., Lee, H., Xu, Y ., Chen, D., Firat, O., Huang, Y .,
+Krikun, M., Shazeer, N., and Chen, Z. Gshard: Scaling
+giant models with conditional computation and automatic
+sharding. 2020. URL https://arxiv.org/abs/
+2006.16668. arXiv preprint / ICLR.
+Li, D., Ma, Y ., Wang, N., et al. Mixlora: Enhancing large
+language models fine-tuning with lora-based mixture of
+experts.arXiv preprint, 2024. URL https://arxiv.
+org/abs/2404.15159.
+Li, Z., Zhang, X., Zhang, Y ., Long, D., Xie, P., and Zhang,
+M. Towards general text embeddings with multi-stage
+contrastive learning, 2023. URL https://arxiv.
+org/abs/2308.03281.
+Liu, Y ., Ott, M., Goyal, N., Du, J., Joshi, M., Chen, D., Levy,
+O., Lewis, M., Zettlemoyer, L., and Stoyanov, V . Roberta:
+A robustly optimized bert pretraining approach, 2019.
+URLhttps://arxiv.org/abs/1907.11692.
+Mehrish, A. et al. Adaptermix: Exploring the efficacy of
+mixture-of-adapters.arXiv preprint, 2023. URL https:
+//arxiv.org/abs/2305.18028.
+Nguyen, T. Q. and Salazar, J. Transformers without tears:
+Improving the normalization of self-attention.arXiv
+preprint arXiv:1910.05895, 2019.
+Nouriborji, M. et al. Minialbert: Model distilla-
+tion via parameter-efficient recursive student. In
+EACL / ACL (workshop / proceedings), 2023.
+URL https://aclanthology.org/2023.
+eacl-main.83.pdf.
+Nussbaum, Z., Morris, J. X., Duderstadt, B., and Mulyar, A.
+Nomic embed: Training a reproducible long context text
+embedder, 2025. URL https://arxiv.org/abs/
+2402.01613.
+Penedo, G., Malartic, Q., Hesslow, D., Cojocaru, R., Cap-
+pelli, A., Alobeidli, H., Pannier, B., Almazrouei, E.,
+and Launay, J. The refinedweb dataset for falcon llm:
+Outperforming curated corpora with web data, and web
+data only, 2023. URL https://arxiv.org/abs/
+2306.01116.
+Pfeiffer, J., R¨uckl´e, A., Sch¨utze, K., et al. Non-destructive
+task composition for transfer learning (adapterfusion).
+arXiv preprint / ACL/EACL workshop, 2020. URL
+https://arxiv.org/abs/2005.00247.
+Portes, J., Trott, A., Havens, S., King, D., Venigalla, A.,
+Nadeem, M., Sardana, N., Khudia, D., and Frankle, J.
+Mosaicbert: A bidirectional encoder optimized for fast
+pretraining, 2024. URL https://arxiv.org/abs/
+2312.17482.
+Rajpurkar, P., Jia, R., and Liang, P. Know what you don’t
+know: Unanswerable questions for squad, 2018. URL
+https://arxiv.org/abs/1806.03822.
+Sanh, V ., Debut, L., Chaumond, J., and Wolf, T. Distil-
+bert, a distilled version of bert: smaller, faster, cheaper
+and lighter, 2020. URL https://arxiv.org/abs/
+1910.01108.
+Shazeer, N. Glu variants improve transformer. 2020. URL
+https://arxiv.org/abs/2002.05202. arXiv
+preprint (describes GeGLU, SwiGLU, etc.).
+Shazeer, N., Mirhoseini, A., Maziarz, K., Davis, A., Le,
+Q. V ., Hinton, G. E., and Dean, J. Outrageously large
+neural networks: The sparsely-gated mixture-of-experts
+layer. 2017. URL https://arxiv.org/abs/
+1701.06538. ICLR workshop / arXiv preprint.
+Su, J., Lu, Y ., Pan, S., Murtadha, A., Wen, B., and Liu,
+Y . Roformer: Enhanced transformer with rotary posi-
+tion embedding. 2021. URL https://arxiv.org/
+abs/2104.09864. arXiv preprint.
+10
+
+===== PAGE 11 =====
+
+Improving Recursive Transformers with Mixture of LoRAs
+Thakur, N., Reimers, N., R ¨uckl´e, A., Srivastava, A., and
+Gurevych, I. Beir: A heterogenous benchmark for zero-
+shot evaluation of information retrieval models, 2021.
+URLhttps://arxiv.org/abs/2104.08663.
+Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones,
+L., Gomez, A. N., Kaiser, Ł., and Polosukhin, I. At-
+tention is all you need. InAdvances in Neural In-
+formation Processing Systems (NeurIPS), 2017. URL
+https://arxiv.org/abs/1706.03762.
+Wang, A., Singh, A., Michael, J., Hill, F., Levy, O., and
+Bowman, S. R. Glue: A multi-task benchmark and anal-
+ysis platform for natural language understanding, 2019.
+URLhttps://arxiv.org/abs/1804.07461.
+Warner, B., Chaffin, A., Clavi ´e, B., Weller, O., et al.
+Modernbert: A modern bidirectional encoder for fast,
+memory-efficient, and long-context fine-tuning and in-
+ference.arXiv preprint, 2024. URL https://arxiv.
+org/abs/2412.13663.
+Wu, X., Huang, S., Wei, F., et al. Mixture of lora experts.
+arXiv preprint / OpenReview, 2024. URL https://
+arxiv.org/abs/2404.13628.
+11
